@@ -1,0 +1,36 @@
+---
+description: HuntTrackPipe overview, key design decisions, repo layout
+alwaysApply: true
+---
+
+# HuntTrackPipe - Project Goal
+
+Local, single-user job-application pipeline. Pasted posting -> Jev (TypeSafe) typed questions -> dynamic JSON schema -> Claude Haiku 5.5 extraction -> per-application folder + one row in `JobHunting/Applications/job_application_tracker.xlsx`. Planned: file conversion/combining, application Q&A. Full spec: `docs/DESIGN.md` (keep it in sync when decisions change).
+
+## Key decisions (agreed with user, do not change without asking)
+- **Excel is the only source of truth for tracker columns.** No database. Non-tracker state lives in `<application folder>/session.json`.
+- **Decoupled from Resumate** (`../resumate`): share files, never import its code. Same stack on purpose (FastAPI + Vue 3).
+- **Jev = pre-LLM filter.** Nouls gate which fields go into the LLM schema (include at >= 0.35). Work_Mode / Employment_Type choices are written directly at confidence >= 0.7, otherwise added to the schema as enums. Upload mode + required-doc nouls are hints for the Files tab.
+- **Manual columns, never sent to Jev or the LLM:** Applied_Date, Posting_URL, Application_Status, Outcome, Applied_Through, Confirmation_#. Days_Since_Applied is a formula; Folder is written by the engine.
+- **Folder name** `{Requisition_ID}_{Organization}_{Position_Title}_{Date_Created}` (creation date, never renamed). `null` for missing parts; `_{unix_ts}` only when the first three are all null; `_2`, `_3` on collision.
+- **File names:** inputs `{count}_<name>.<ext>`; separate finals `{Candidate_Name}_{DocType}_{X}.<ext>`; combined `{Candidate_Name}_{X}.pdf` (combined output is PDF only).
+- **Q&A context** is one user-written `JobHunting/candidate_context.txt`, read fresh every call.
+- **Ports:** API 8010, UI 5180 (Resumate uses 8000 / 5173; both must run side by side).
+
+## Repo layout
+```
+backend/
+  config.py        Settings from htp.config.json (+ HTP_CONFIG override) and .env
+  naming.py        sanitize, folder/file names, {X} token
+  pipeline.py      extract() + create_application(), shared by CLI and future API
+  run.py           CLI: python -m backend.run
+  jev/             questions.py (question set + Excel mappings), client.py, derive.py
+  llm/             schema_builder.py, prompts.py, client.py, postprocess.py
+  excel/tracker.py openpyxl writer
+  sessions/        models.py (session.json), store.py
+docs/DESIGN.md     design spec
+htp.config.json    non-secret settings
+JobHunting/        personal data (git-ignored: Applications/*, candidate_context.txt)
+```
+
+Venv: shared `resumate_env` at `C:\Users\saf\Documents\coding\Python\Virtual_Environments\resumate_env` (Python 3.14).

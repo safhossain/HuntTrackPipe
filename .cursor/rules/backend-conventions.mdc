@@ -1,0 +1,34 @@
+---
+description: Backend Python conventions and provider constraints (Jev, Claude Haiku 5.5, openpyxl)
+globs: backend/**/*.py
+alwaysApply: false
+---
+
+# Backend conventions
+
+## General
+- All text/JSON I/O uses `encoding="utf-8"` (Windows defaults to cp1252). Config is read with `utf-8-sig` to tolerate BOMs.
+- Writes that must not corrupt (session.json, tracker) go to a temp file, then `os.replace`.
+- Import heavy SDKs lazily inside the client (`anthropic` is imported in `ClaudeClient.__init__`).
+- Never read or print `.env`; get keys via `config.api_key(name)`.
+
+## Jev (`backend/jev/`)
+- Official endpoint only: `POST https://api.typesafe.ai/v1/systemone`, model pinned `jev-1.13.0`. Log the response `model`.
+- `state` is sent as `{"posting": text}`; truncated to ~30k tokens (Jev caps state + longest question at 32k).
+- Every noul has `criteria.true` / `criteria.false`. Phrase so high = yes; never ask negated duplicates.
+- Jev is weak at dates, counting and math: use it to decide existence/category, and keep arithmetic in code.
+- New question -> add to `QUESTIONS` and, if it maps to Excel, to `EXISTENCE` / `CHOICE_COLUMNS`; then update `derive.py`.
+
+## Claude Haiku 5.5 (`backend/llm/`)
+- Model `claude-haiku-5-5`, Messages API, schema in `output_config.format` (`type: json_schema`), `output_config.effort = "low"`.
+- Do NOT send `temperature`, `top_p` or `top_k` (400 on this model).
+- Structured outputs reject `maxItems` (only `minItems` 0/1). Put caps in the description and enforce in code (see `MAX_ROLE_CATEGORIES`).
+- Every schema property is required + nullable; `additionalProperties: false`. Fields are ordered like Excel columns.
+- Pricing jumps 5x above 100k input tokens; `token_warn` (80k) guards it.
+
+## Excel (`backend/excel/tracker.py`)
+- Locate columns by header name in table `Applications`, never by letter.
+- Default is fill-only-empty; overwriting requires `force_columns`.
+- Dates are written as `datetime` with `yyyy-mm-dd` format. New rows get the Days_Since_Applied structured-reference formula and a relative `Folder` hyperlink.
+- Call `check_writable()` before creating anything on disk, so a locked tracker leaves no orphan folder.
+- openpyxl drops charts/images on save; the tracker has neither. Re-verify if that changes.

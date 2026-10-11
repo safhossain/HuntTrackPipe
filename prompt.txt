@@ -1,0 +1,132 @@
+Creating a Job Application Automation Pipeline - HuntTrackPipe. It is a separate but complimentary tool 
+to my other tool Resumate (C:\Users\saf\Documents\coding\PROJECTS\resumate). 
+
+Go over the what Resumate is about and how it works on a high level. There are plenty of READMEs and 
+.rules/ files within that resumate repo. YOU DO NOT (I repeat YOU DO NOT) need to read (or write) the entire codebase.
+This will waste tokens and time and possibly poison current session context. Just high-level stuff.
+
+I am not currently planning on implementing a direct bridge between these two via services or api calls. 
+Their interactions will most likely be handled manually by me (HuntTrackPipe Jev-Summary -> resumate prompt; 
+Resumate outputs + etc. -> HuntTrackPipe FileSystem Operations/CombinationEngine etc. 
+These terms will be explained later below).
+
+I have not decided on the type of tech stack I want to build this or even type of application (webapp vs 
+native OS app, etc). For context, working on Windows 11 machine right now. You will determine the best approach.
+
+Firstly, I'd like the xlsx file to be the final source of truth. No additional databases need to be spun up.
+You can analyze job_application_tracker.xlsx (not the one within \Applications\old\0_archive_spreadsheet\) for reference
+but do use the MCP server (excel) if you plan on it since it's easier; don't just use your own system tool calls that 
+might waste time and tokens.
+
+You may analyze job_application_tracker.xlsx (within \Applications subdir, not \Applications\old\0_archive_spreadsheet\). 
+You'll see a Table (name: "Applications") with the column-names row and an empty first row.
+
+I want to implement the new product by TypeSafe "Jev" as a complimentary pre-LLM filter + few other actions.
+From what I know, Jev has 3 output types: noul, choice, and score. We will be using the first two.
+
+What I plan to do is essentially provide the big blob of text from a job posting to Jev, it will act as a pre-LLM filter.
+This is because Jev is not really a 'parser' in the sense of extracting specific information from a text. But it will
+be useful to determine what at least *exists* or *classifying* some text. 
+
+Jev will then return a NOUL question or choices for *LLM Output Schema Creation*.
+
+Columns:AssociatedJevOutputType[noul question or choices]
+Requisition_ID:NOUL[Does a Requisition ID exist in the text?]
+Organization:NOUL[Can we determine the Organization from the text?]
+Position_Title:NOUL[Can we determine the Position Title from the text?]
+Compensation:NOUL[Can we determine the Compensation from the text?]
+Work_Mode:CHOICE[In-person, Hybrid, Remote, Travel, TBD, Unknown]
+Employment_Type:[Full-time, Part-time, Contract, Contract Full-Time, Contract Part-Time, Internship, Co-op, Temporary, Freelance, Unknown ]
+Deadline:NOUL[Can we determine the Deadline from the text?]
+Applied_Date:N/A Not Sent To Jev or LLM. Will be manually added by user to HuntTrackPipe Engine and/or modified by user in Excel file.
+Posting_URL:N/A Not Sent To Jev or LLM. Will be manually added by user to HuntTrackPipe Engine and/or modified by user in Excel file.
+Application_Status:Not sent to Jev or LLM. Will be manually added by user to HuntTrackPipe Engine and/or modified by user in Excel file.
+Recruiter_Name:NOUL[Can we determine the Recruiter Name from the text?]
+Recruiter_Contact:NOUL[Can we determine the Recruiter Contact from the text?]
+Outcome:N/A Not Sent To Jev or LLM. Will be manually added by user to HuntTrackPipe Engine and/or modified by user in Excel file.
+Role_Categories:NOUL[Can we determine the Role Categories from the text?]
+Position_Level:NOUL[Can we determine the Position Level from the text? (Junior, Mid-Level, Senior, etc.)]
+Days_Since_Applied:N/A Not Sent To Jev or LLM. Excel file formula to calculate days since applied.
+Applied_Through:N/A Not Sent To Jev or LLM. Will be manually added by user to HuntTrackPipe Engine and/or modified by user in Excel file.
+Confirmation_#:N/A Not Sent To Jev or LLM. Will be manually added by user to HuntTrackPipe Engine and/or modified by user in Excel file.
+
+So, the above items with NOUL or CHOICE will be sent to Jev for evaluation.
+
+Then, we will dynamically + deterministically generate a output-schema (json structured output) for the 
+remote LLM call to use. Of course, we will still need to send the original blob of text (job posting) to the LLM 
+for further extraction but at least it will know exactly what to look for and what to exclude in its output.
+
+------------------------------------------------
+Some problems I only have half-solutions or need proposed solutions from you:
+
+1. Multi-File Upload: One more question to ask Jev I call the "MULTI-FILE" (more complex overall feature):
+NOUL["Will this job application require multi-part file upload?"]. For example, some job applications require
+that you combine a resume, cover letter, transcripts, etc. into a single file. If Jev says yes (multi-file upload
+is found to be needed), it has nothing to do with the LLM's output schema, but we'd separately send it to the 
+Engine as simply a flag and the engine would just do some sort of notification to the user. The user could have two 
+choices:
+    1. Do the multi-file upload fully manually and then continue with the application. They would upload the single, 
+    combined file themselves.
+    2. Semi-manual approach (CombinationEngine). Their would be some sort of GUI that would allow users to select 
+    the files they want to upload (including ordering and re-ordering them as needed), naming the file as needed, and 
+    then the Engine would handle the actual combination of the files into a single file of chosen format (ex: pdf). 
+    Keep note, the fact that the final single file is a specific format would require the Engine to also have file 
+    conversion capabilities. It does not need to be heavily extensive. I believe this would be enough for now:
+        a) pdf <-> doc/docx (note: 2-way)
+        b) pdf <-> png/jpg  (note: 2-way)
+
+--> possible but likely difficult feature to implement: some applications may require answering or filling
+out questions in text input fields. If done manually, it would be the bottleneck of the entire process and
+reduce the usefulness of the automation pipeline. These are usually questions that could not be simply processed
+by the HuntTrackPipe engine itself; *might* require some integration with Resumate because Resumate has the 
+candidate context (resume, additional candidate info, etc). And also, there would likely be multiple questions.
+If there was such a feature to continously add questions to the application (either before or after init engine
+running) it would be a useful feature. But the engine would have to have some sort of 'session' to keep
+track of A) questions B) candidate context (resume, additional candidate info, etc). Propose a solution for this.
+But again, keep in mind that I would prefer to de-couple Resumate and HuntTrackPipe as much as possible and
+no databases.
+------------------------------------------------
+The Engine, per session, should perform the following actions:
+1. Do File System operations. This means creating subdirectories for each application.
+- subdirs will live in \Applications
+- subdirs will be named {Requisition_ID}_{Organization_Name}_{Position_Title}_{Applied_Date}
+- Based on what is and what is NOT available from the job posting, the file name will replace it with "null" in
+the position. spaces in between words will be replaced with hyphens.
+Example (all 4 available):
+1234567890_Google_Software-Engineer_2026-01-01
+Example (no Requisition_ID):
+null_Google_Software-Engineer_2026-01-01
+example (no req id and org name):
+null_null_Software-Engineer_2026-01-01
+
+It is extremely unlikely that all four are not available. In the rare case where the first three are not available,
+and only date applied is available, the subdir name will be null_null_null_{Date_Applied}_{timestamp}. Where timestamp
+can simply be UNIX timestamp for uniqueness guarantee. But this does NOT mean {timestamp} will exist in all subdir names.
+Only in the rare case where the first three are not available.
+
+As for files within the subdirs:
+If multi-file upload, keep all the individual files in the subdir aswell as the final combined file. The individual
+files will be named as: {count (0, 1, 2, 3, ...)}_<file_name>.{file_extension}. 
+
+Regardless if multi-file upload or not, the final combined file should be named as: 
+{Candidate_Name}_{X}.{file_extension}, Where X is determined by the following priority:
+    1. Requisition_ID
+    2. Organization_Name+Position_Title
+    3. Organization_Name
+    4. Position_Title
+    5. Applied_Date
+
+2. Update the Excel file rows accordingly. Each session = 1 row = 1 application (I guess)
+------------------------------------------------
+
+Do not implement anything yet. We will do an iterative back and forth on:
+1. Resolving any questions you have for me. Especially analyze if I stated any *conflicting requirements*
+2. Proposing solutions to the problems I had
+
+Additionally, we'll have to decide which LLM provider to use. Since the task is quite simple (just
+extracting specific information from a text), the chosen model should be one of the newer ones 
+from the big providers (anthropic, openai, google, etc) but their tiny/small models with cheap
+token costs. You should do some actual research not just guess or rely on internal knowledge for this.
+
+I will provide Jev + chosen LLM provider api keys in .env only once we have a final decision on the
+LLM provider.

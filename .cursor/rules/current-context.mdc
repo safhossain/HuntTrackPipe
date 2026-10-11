@@ -1,0 +1,24 @@
+---
+description: Current implementation state of HuntTrackPipe, what's done, what's next
+alwaysApply: true
+---
+
+# HuntTrackPipe - Current State (2026-10-11)
+
+## Done: step 1 of 5 (core + CLI)
+- Config, naming, session store, Jev client/questions/derive, schema builder, Claude client, post-processing, Excel writer, CLI.
+- Verified: 11 offline tests (naming, derive -> schema -> row values, Excel writer on a tracker copy, folder + row creation, lock handling); live dry runs on a rich and a sparse posting; full CLI run against a temp tracker copy, re-read via the Excel MCP (row, dates, formula, Folder hyperlink, table and dropdowns intact).
+- There is no committed test suite yet; tests were run from `%TEMP%`. Add `tests/` before step 5.
+
+## Next
+2. **Webapp**: FastAPI (`backend/main.py`, `backend/api/routers/`) on :8010 + Vue 3/Vite/Pinia/Tailwind in `frontend/` on :5180 (`strictPort: true`, `/api` proxy). Screens: Dashboard, New application, Session Overview. Root `npm run dev` runs both. Reuse `pipeline.extract()` / `create_application()`; don't duplicate logic in routers.
+3. **Files**: `backend/files/` (convert, combine with pypdf, PyMuPDF thumbnails), reorder UI. Libraries not installed yet: pypdf, img2pdf, pdf2docx, pillow (pymupdf is installed).
+4. **Q&A**: `backend/qa/answer.py`, `answers.md`.
+5. **Hardening**: pending-write retry UI, re-extract diff (`write_row(force_columns=...)` already supports it), duplicate-posting detection, logs.
+
+## Tracker state
+Table `Applications` = `A1:S2`, headers end with `Folder` (column S). Row 2 is the empty seed row with the Days_Since_Applied formula in P2. Dropdowns cover whole columns E, F, J, M, Q. User keeps it closed while the engine runs.
+
+## Known gaps
+- `Session.files` / `qa` models exist but nothing writes them yet.
+- No API layer yet, so `pending_write` is only saved, never retried.

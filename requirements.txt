@@ -1,0 +1,9 @@
+# Core (step 1). Install into resumate_env: python -m pip install -r requirements.txt
+fastapi
+uvicorn
+pydantic>=2
+python-dotenv
+httpx
+anthropic
+openpyxl
+# Files (step 3): pypdf img2pdf pdf2docx pillow pymupdf

@@ -3,3 +3,6 @@
 **/__pycache__/**
 **/node_modules/**
 JobHunting/Applications/*
+JobHunting/candidate_context.txt
+htp.config.json
+prompt.txt
