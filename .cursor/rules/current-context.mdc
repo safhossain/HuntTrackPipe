@@ -5,23 +5,23 @@ alwaysApply: true
 
 # HuntTrackPipe - Current State (2026-10-11)
 
-## Done: steps 1-2 of 5
-- **Step 1 (core + CLI)**: config, naming, session store, Jev client/questions/derive, schema builder, Claude client, post-processing, Excel writer (`backend/excel/tracker.py`), `backend/pipeline.py` (`extract()`, `create_application()`), CLI `python -m backend.run`. Column lists / dropdown options live in `backend/columns.py`.
-- **Step 2 (webapp)**: FastAPI app `backend/main.py` + `backend/api/` (models, deps, routers `extract`, `sessions`, `settings`) on :8010; Vue 3 / Vite 7 / Pinia / Tailwind v4 / vue-router in `frontend/` on :5180 (`strictPort`, `/api` proxy). Root `npm run dev` runs both via concurrently. Screens: `DashboardView`, `NewApplicationView`, `SessionView` (tabs overview / files / questions / log; files + questions are placeholders).
-- Endpoints: `GET /api/health`, `/api/meta`, `/api/settings`, `GET|POST /api/sessions`, `GET /api/sessions/{folder}`, `PUT /api/sessions/{folder}/row` (`{values, force_columns}`), `POST /api/sessions/{folder}/row/retry`, `POST /api/extract`. Errors: TrackerLocked 423, TrackerError/ValueError 400, Jev/LLM 502, FileExistsError 409.
-- `review.pending_write` is `{values, force_columns}`; set only on 423 (lock), flushed by `/row/retry`.
-- Verified in the Cursor browser against a temp tracker copy (`HTP_CONFIG` pointing at `%TEMP%`): extraction, create (folder + row 2), edit + save, lock -> 423 -> pending banner -> retry overwrote the column. Re-read via the Excel MCP. `vue-tsc --noEmit` passes.
-- There is still no committed test suite; offline tests were run from `%TEMP%`. Add `tests/` before step 5.
+## Done: steps 1-3 of 5
+- **Step 1 (core + CLI)**: config, naming, session store, Jev client/questions/derive, schema builder, Claude client, post-processing, Excel writer (`backend/excel/tracker.py`), `backend/pipeline.py` (`extract()`, `create_application()`), CLI `python -m backend.run`. Column lists / dropdown options / `META` live in `backend/columns.py`.
+- **Step 2 (webapp)**: FastAPI `backend/main.py` + `backend/api/` on :8010; Vue 3 / Vite 7 / Pinia / Tailwind v4 in `frontend/` on :5180 (`strictPort`, `/api` proxy). Root `npm run dev` runs both. Screens: `DashboardView`, `NewApplicationView`, `SessionView` (tabs overview / files / questions / log), `ConvertView`.
+- **Step 3 (files)**: `backend/files/` — `convert.py` (office->pdf via soffice with persistent profile `%TEMP%/htp_lo_profile`; pdf->docx pdf2docx; pdf->png/jpg PyMuPDF; img->pdf img2pdf; `to_pdf` cache in `<folder>/.converted/`; `thumbnail` cache in `.thumbs/`), `combine.py` (pypdf), `manager.py` (`FileManager`: add/adopt/reorder (two-phase rename, remaps finals + combined indices)/set_doc_type/remove/convert_input/make_final/combine/delete_output/untracked/missing/thumbnail; `x_for(session,row)`). Router `backend/api/routers/files.py`; UI `components/FilesPanel.vue` (drop zone, thumbnails, drag + arrows reorder, doc type guessed from name, per-file Convert…, Make final(s), Combine → PDF, untracked adopt) and `/convert` standalone page. Libraries installed in resumate_env: pypdf, img2pdf, pdf2docx (+opencv-headless), pillow, pymupdf, python-multipart.
+- Endpoints (prefix `/api`): `health`, `meta`, `settings`, `GET|POST sessions`, `GET sessions/{f}`, `PUT sessions/{f}/row` (`{values, force_columns}`), `POST sessions/{f}/row/retry`, `POST extract`, `GET|POST sessions/{f}/files`, `PUT .../files/order|upload-mode|{idx}`, `DELETE .../files/{idx}|output/{name}`, `POST .../files/adopt|final|combine|{idx}/convert`, `GET .../files/thumb/{name}|download/{name}`, `GET files/tools`, `POST files/convert`. Errors: TrackerLocked 423, TrackerError/ValueError/ConversionError 400, FileNotFoundError 404, Jev/LLM 502, FileExistsError 409, upload > 50 MB 413.
+- `review.pending_write` is `{values, force_columns}`; set only on 423, flushed by `/row/retry`.
+- Verified in the Cursor browser against a temp tracker copy: extraction, create, edit/save, lock -> 423 -> retry; files: upload (PDF/PNG/DOCX), thumbnails incl. DOCX, reorder renumbering, make finals, combine (4 pages, correct order), per-file convert, standalone convert (single + zip), traversal rejected. `vue-tsc --noEmit` passes.
+- Still no committed test suite; offline tests run from `%TEMP%`. Add `tests/` in step 5.
 
 ## Next
-3. **Files**: `backend/files/` (convert, combine with pypdf, PyMuPDF thumbnails), upload/reorder/doc-type UI in the Session "files" tab. Libraries not installed yet: pypdf, img2pdf, pdf2docx, pillow (pymupdf is installed). Naming helpers already exist in `backend/naming.py` (`input_file_name`, `final_file_name`, `combined_file_name`, `DOC_TYPES`). `Session.files` model exists but nothing writes it.
-4. **Q&A**: `backend/qa/answer.py`, `answers.md`, candidate context from `JobHunting/candidate_context.txt` (user writes it; tell them when it's time).
-5. **Hardening**: committed `tests/`, re-extract diff (`write_row(force_columns=...)` supports it), duplicate-posting detection, logs.
+4. **Q&A**: `backend/qa/answer.py` (one Claude structured call `{answers:[{id,answer}]}`, limit verification + one re-ask), `answers.md` regenerated per change, candidate context from `JobHunting/candidate_context.txt` (user writes it; **tell the user when it's time to write it**). `Session.qa` / `Question` / `Limit` models exist. Router + Questions tab in `SessionView`.
+5. **Hardening**: committed `tests/`, re-extract diff (`write_row(force_columns=...)` supports it), duplicate-posting detection, logs, Settings page.
 
 ## Tracker state
 Table `Applications` = `A1:S2`, headers end with `Folder` (column S). Row 2 is the empty seed row with the Days_Since_Applied formula in P2. Dropdowns cover whole columns E, F, J, M, Q. User keeps it closed while the engine runs.
 
 ## Testing conventions
-- Never run against the real tracker; copy it to `%TEMP%`, write a config there and set `HTP_CONFIG`.
-- Start the API without `--reload` from a background shell when testing from the agent; restart it after backend edits.
+- Never run against the real tracker; copy it to `%TEMP%\htp_ui`, write a config there and set `HTP_CONFIG`.
+- Start the API without `--reload` from a background shell when testing from the agent; restart it after backend edits. Seed sessions/files via the API (`POST /sessions` with a hand-made extraction, multipart `POST .../files`) since the Cursor browser cannot pick files.
 - Keep scratch tests outside the repo; `git status` must stay clean of test artifacts.

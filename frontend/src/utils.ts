@@ -31,3 +31,22 @@ export function fmtDate(v: string | number | null | undefined): string {
 export function pct(p: number | null | undefined): string {
   return p === null || p === undefined ? '-' : `${Math.round(p * 100)}%`
 }
+
+export function fmtBytes(n: number | null | undefined): string {
+  if (n === null || n === undefined) return ''
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`
+}
+
+export function extOf(name: string): string {
+  const i = name.lastIndexOf('.')
+  return i >= 0 ? name.slice(i + 1).toLowerCase() : ''
+}
+
+export const UPLOAD_MODE_LABELS: Record<string, string> = {
+  single_document: 'Single document',
+  separate_uploads: 'Separate uploads',
+  single_combined_file: 'One combined file',
+  not_stated: 'Not stated',
+}

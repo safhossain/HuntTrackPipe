@@ -13,9 +13,9 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+async function raw(path: string, init?: RequestInit, json = true): Promise<Response> {
   const res = await fetch(`/api${path}`, {
-    headers: { 'Content-Type': 'application/json' },
+    ...(json ? { headers: { 'Content-Type': 'application/json' } } : {}),
     ...init,
   })
   if (!res.ok) {
@@ -30,7 +30,33 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     }
     throw new ApiError(res.status, detail, type)
   }
-  return (await res.json()) as T
+  return res
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  return (await (await raw(path, init)).json()) as T
+}
+
+/** multipart POST; FormData sets its own Content-Type boundary. */
+async function upload<T>(path: string, form: FormData): Promise<T> {
+  return (await (await raw(path, { method: 'POST', body: form }, false)).json()) as T
+}
+
+/** Trigger a browser download of a binary response. */
+export async function downloadResponse(res: Response, fallbackName: string): Promise<string> {
+  const cd = res.headers.get('Content-Disposition') ?? ''
+  const m = /filename\*=UTF-8''([^;]+)|filename="?([^";]+)"?/i.exec(cd)
+  const name = m ? decodeURIComponent(m[1] ?? m[2] ?? fallbackName) : fallbackName
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = name
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 10_000)
+  return name
 }
 
 export async function waitForApi(maxMs = 90_000): Promise<void> {
@@ -59,6 +85,7 @@ export interface Meta {
   date_columns: string[]
   options: Record<string, string[]>
   doc_types: string[]
+  upload_modes: string[]
 }
 
 export interface SettingsView {
@@ -115,6 +142,48 @@ export interface WriteReport {
   skipped: Record<string, [RowValue, RowValue]>
 }
 
+export interface InputFile {
+  index: number
+  file: string
+  doc_type: string | null
+  original: string
+  size: number | null
+  pages: number | null
+  added_at: string
+}
+
+export interface FinalFile {
+  file: string
+  doc_type: string
+  from: number | null
+  at: string
+}
+
+export interface CombinedFile {
+  file: string
+  from_indices: number[]
+  pages: number | null
+  at: string
+}
+
+export interface Files {
+  inputs: InputFile[]
+  finals: FinalFile[]
+  combined: CombinedFile | null
+}
+
+export interface FilesView {
+  files: Files
+  upload_mode: string
+  upload_mode_source: string
+  required_docs: string[]
+  untracked: string[]
+  missing: string[]
+  x: string
+  candidate: string
+  tools: { soffice: string | null; pdf2docx: boolean; targets: string[] }
+}
+
 export interface Session {
   schema_version: number
   session_id: string
@@ -126,7 +195,7 @@ export interface Session {
   review: { values: Row; written_at: string | null; pending_write: { values: Row; force_columns: string[] } | null }
   upload_mode: string
   upload_mode_source: string
-  files: unknown
+  files: Files
   qa: { questions: unknown[] }
 }
 
@@ -166,4 +235,47 @@ export const api = {
     }),
   retryRow: (folder: string) =>
     request<{ report: WriteReport; row: Row | null }>(`/sessions/${encodeURIComponent(folder)}/row/retry`, { method: 'POST' }),
+
+  // ---- files ----
+  files: (folder: string) => request<FilesView>(filesPath(folder)),
+  uploadFiles: (folder: string, files: File[]) => {
+    const form = new FormData()
+    for (const f of files) form.append('files', f, f.name)
+    return upload<FilesView>(filesPath(folder), form)
+  },
+  adoptFile: (folder: string, name: string) =>
+    request<FilesView>(`${filesPath(folder)}/adopt`, { method: 'POST', body: JSON.stringify({ name }) }),
+  reorderFiles: (folder: string, order: number[]) =>
+    request<FilesView>(`${filesPath(folder)}/order`, { method: 'PUT', body: JSON.stringify({ order }) }),
+  setUploadMode: (folder: string, upload_mode: string) =>
+    request<FilesView>(`${filesPath(folder)}/upload-mode`, { method: 'PUT', body: JSON.stringify({ upload_mode }) }),
+  setDocType: (folder: string, index: number, doc_type: string | null) =>
+    request<FilesView>(`${filesPath(folder)}/${index}`, { method: 'PUT', body: JSON.stringify({ doc_type }) }),
+  deleteInput: (folder: string, index: number) => request<FilesView>(`${filesPath(folder)}/${index}`, { method: 'DELETE' }),
+  convertInput: (folder: string, index: number, target: string) =>
+    request<FilesView>(`${filesPath(folder)}/${index}/convert`, { method: 'POST', body: JSON.stringify({ target }) }),
+  makeFinals: (folder: string, indices: number[] | null) =>
+    request<FilesView>(`${filesPath(folder)}/final`, { method: 'POST', body: JSON.stringify({ indices }) }),
+  combine: (folder: string, indices: number[] | null) =>
+    request<FilesView>(`${filesPath(folder)}/combine`, { method: 'POST', body: JSON.stringify({ indices }) }),
+  deleteOutput: (folder: string, name: string) =>
+    request<FilesView>(`${filesPath(folder)}/output/${encodeURIComponent(name)}`, { method: 'DELETE' }),
+  // Absolute URLs for <img src> / <a href> (not routed through request()).
+  thumbUrl: (folder: string, name: string, stamp?: string | number) =>
+    `/api${filesPath(folder)}/thumb/${encodeURIComponent(name)}${stamp !== undefined ? `?v=${encodeURIComponent(String(stamp))}` : ''}`,
+  downloadUrl: (folder: string, name: string, inline = false) =>
+    `/api${filesPath(folder)}/download/${encodeURIComponent(name)}${inline ? '?inline=true' : ''}`,
+
+  // ---- standalone converter ----
+  tools: () => request<{ soffice: string | null; pdf2docx: boolean; targets: string[] }>('/files/tools'),
+  convertFile: async (file: File, target: string) => {
+    const form = new FormData()
+    form.append('file', file, file.name)
+    form.append('target', target)
+    return raw('/files/convert', { method: 'POST', body: form }, false)
+  },
+}
+
+function filesPath(folder: string) {
+  return `/sessions/${encodeURIComponent(folder)}/files`
 }

@@ -47,4 +47,5 @@ META = {
     "date_columns": list(DATE_COLUMNS),
     "options": OPTIONS,
     "doc_types": list(DOC_TYPES),
+    "upload_modes": ["single_document", "separate_uploads", "single_combined_file", "not_stated"],
 }

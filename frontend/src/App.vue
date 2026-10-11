@@ -13,11 +13,12 @@ onMounted(() => app.bootstrap())
     <header class="border-b border-slate-200 bg-white">
       <div class="mx-auto flex max-w-6xl items-center gap-6 px-4 py-3">
         <RouterLink to="/" class="text-lg font-semibold tracking-tight">HuntTrackPipe</RouterLink>
-        <nav class="flex gap-4 text-sm">
+        <nav class="flex gap-4 whitespace-nowrap text-sm">
           <RouterLink to="/" class="hover:text-indigo-600" active-class="text-indigo-600 font-medium" exact-active-class="text-indigo-600 font-medium">Dashboard</RouterLink>
           <RouterLink to="/new" class="hover:text-indigo-600" active-class="text-indigo-600 font-medium">New application</RouterLink>
+          <RouterLink to="/convert" class="hover:text-indigo-600" active-class="text-indigo-600 font-medium">Convert</RouterLink>
         </nav>
-        <div class="ml-auto flex items-center gap-3 text-xs text-slate-500">
+        <div class="ml-auto flex items-center gap-3 whitespace-nowrap text-xs text-slate-500">
           <template v-if="app.settings">
             <span :class="app.settings.keys.TYPESAFE_API_KEY ? 'text-emerald-600' : 'text-red-600'">Jev key {{ app.settings.keys.TYPESAFE_API_KEY ? 'ok' : 'missing' }}</span>
             <span :class="app.settings.keys.ANTHROPIC_API_KEY ? 'text-emerald-600' : 'text-red-600'">Claude key {{ app.settings.keys.ANTHROPIC_API_KEY ? 'ok' : 'missing' }}</span>

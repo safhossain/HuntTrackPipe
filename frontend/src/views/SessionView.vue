@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { api, type Row, type RowValue, type SessionDetail } from '../api/client'
+import { api, type FilesView, type Row, type RowValue, type SessionDetail } from '../api/client'
 import FieldInput from '../components/FieldInput.vue'
+import FilesPanel from '../components/FilesPanel.vue'
 import JevPanel from '../components/JevPanel.vue'
 import { useAppStore } from '../stores/app'
 import { errorText, fmtDate } from '../utils'
@@ -93,6 +94,13 @@ async function copyPath() {
   }
 }
 
+function onFilesChanged(v: FilesView) {
+  if (!detail.value) return
+  detail.value.session.files = v.files
+  detail.value.session.upload_mode = v.upload_mode
+  detail.value.session.upload_mode_source = v.upload_mode_source
+}
+
 const pretty = (o: unknown) => JSON.stringify(o, null, 2)
 </script>
 
@@ -137,8 +145,8 @@ const pretty = (o: unknown) => JSON.stringify(o, null, 2)
       </div>
     </section>
 
-    <section v-else-if="tab === 'files'" class="card text-sm text-slate-500">
-      Files (rename, convert, combine) arrive in step 3. Jev flagged upload mode <span class="font-mono">{{ detail.session.upload_mode }}</span><span v-if="detail.session.jev?.derived.required_docs.length">; documents: {{ detail.session.jev.derived.required_docs.join(', ') }}</span>.
+    <section v-else-if="tab === 'files'">
+      <FilesPanel :folder="folder" @changed="onFilesChanged" />
     </section>
 
     <section v-else-if="tab === 'questions'" class="card text-sm text-slate-500">Application questions arrive in step 4.</section>

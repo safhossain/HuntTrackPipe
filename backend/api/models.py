@@ -5,7 +5,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from ..sessions.models import JevDerived, JevRecord, LLMRecord, Session
+from ..sessions.models import Files, JevDerived, JevRecord, LLMRecord, Session, UploadMode
 
 
 class ExtractRequest(BaseModel):
@@ -69,6 +69,42 @@ class RowWriteRequest(BaseModel):
 class RowWriteResponse(BaseModel):
     report: WriteReportModel
     row: dict[str, Any] | None = None
+
+
+class FilesView(BaseModel):
+    files: Files
+    upload_mode: str
+    upload_mode_source: str
+    required_docs: list[str] = Field(default_factory=list)
+    untracked: list[str] = Field(default_factory=list)
+    missing: list[str] = Field(default_factory=list)
+    x: str
+    candidate: str
+    tools: dict[str, Any] = Field(default_factory=dict)
+
+
+class OrderRequest(BaseModel):
+    order: list[int]
+
+
+class DocTypeRequest(BaseModel):
+    doc_type: str | None = None
+
+
+class IndicesRequest(BaseModel):
+    indices: list[int] | None = None
+
+
+class ConvertRequest(BaseModel):
+    target: str
+
+
+class NameRequest(BaseModel):
+    name: str
+
+
+class UploadModeRequest(BaseModel):
+    upload_mode: UploadMode
 
 
 class SettingsResponse(BaseModel):

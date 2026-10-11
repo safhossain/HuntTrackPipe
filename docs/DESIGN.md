@@ -215,9 +215,11 @@ Conversions (also exposed as a standalone tool in the UI):
 - pdf -> png/jpg: PyMuPDF, one image per page `{stem}_p{n}.png` at configurable DPI (default 150).
 - png/jpg -> pdf: `img2pdf`.
 
-Combine (output is always PDF): every input is converted to PDF into `.converted/` inside the folder if needed, merged with `pypdf` in display order, saved as `{Candidate_Name}_{X}.pdf`. Inputs stay in place. The Files tab shows first-page thumbnails (PyMuPDF), drag-reorder, doc-type dropdown per file, "Make final" (copy + rename per section 8) and "Combine".
+Combine (output is always PDF): every input is converted to PDF into `.converted/` inside the folder if needed (cache reused while newer than the source), merged with `pypdf` in display order, saved as `{Candidate_Name}_{X}.pdf` (re-combining overwrites it). Inputs stay in place. The Files tab shows first-page thumbnails (PyMuPDF, cached in `.thumbs/`; Office files go through the PDF cache), drag-reorder or ▲/▼ (files are renumbered on disk with a two-phase rename; finals' `from` and the combined file's `from_indices` are remapped), doc-type dropdown per file (pre-guessed from the file name: resume/cv, cover, transcript, portfolio, reference), per-file "Convert…" (result is appended as a new input with the same doc type), "Make final" (copy + rename per section 8; re-making replaces the earlier final from the same input), "Make finals" for every typed input, and "Combine → PDF". Files the user drops into the folder by hand are listed as *untracked* and can be adopted as inputs; manifest entries whose file disappeared are flagged as *missing*.
 
-Upload mode (from Jev, user can override): `single_document` / `separate_uploads` -> "Make final" per file; `single_combined_file` -> Combine button highlighted.
+Implementation: `backend/files/convert.py` (conversions, `to_pdf`, `thumbnail`, tool detection), `combine.py` (pypdf merge), `manager.py` (`FileManager`: manifest + disk in sync, `x_for()` = {X} from Excel's row when readable). LibreOffice runs headless with a persistent private profile in `%TEMP%/htp_lo_profile` (first call ~15 s, then ~3 s per document). File names from the API are validated to be plain names inside the folder.
+
+Upload mode (from Jev, user can override; override is remembered as `upload_mode_source = user`): `single_document` / `separate_uploads` -> "Make finals" highlighted; `single_combined_file` -> Combine button highlighted.
 
 ## 11. Application questions (Q&A)
 
@@ -232,7 +234,8 @@ Operations: add / edit / delete question (any time, before or after extraction),
 1. **Dashboard** - list of application folders with status/outcome read from Excel; "New application".
 2. **New application** - paste posting + URL -> Run -> three panels: Jev results (chips with probability/confidence), extracted fields (editable form), manual fields (Applied_Date, Posting_URL, Application_Status, Applied_Through, Confirmation_#). "Create" makes the folder and writes the row.
 3. **Session** - tabs: Overview (Excel read-back, edit manual fields, write), Files (section 10), Questions (section 11), Log (raw Jev/LLM payloads, usage, timings).
-4. **Settings** - edits `htp.config.json`; shows key presence (never the keys).
+4. **Convert** - standalone converter (section 10); nothing is stored.
+5. **Settings** - edits `htp.config.json`; shows key presence (never the keys). *(not built yet; key presence is shown in the header)*
 
 ## 13. Config (`htp.config.json`)
 
@@ -260,13 +263,17 @@ Operations: add / edit / delete question (any time, before or after extraction),
 | `POST /sessions` | create folder + session.json + Excel row (extraction + manual values + row overrides) |
 | `PUT /sessions/{folder}/row` | write edited fields; body `{values, force_columns}` — `force_columns` overwrite, others fill-only-empty |
 | `POST /sessions/{folder}/row/retry` | flush `review.pending_write` (`{values, force_columns}`) after Excel is closed |
-| `POST /sessions/{id}/files` / `PUT .../order` / `PUT .../{idx}` | upload, reorder, set doc type |
-| `POST /sessions/{id}/files/final` / `POST .../combine` / `POST /files/convert` | naming + combination + conversions |
-| `GET /sessions/{id}/files/{idx}/thumb` | thumbnail |
+| `GET|POST /sessions/{folder}/files` | manifest view (`FilesView`: files, upload mode, required docs, untracked, missing, `x`, tools) / multipart upload (`files[]`) |
+| `PUT .../files/order` `{order}` · `PUT .../files/{idx}` `{doc_type}` · `DELETE .../files/{idx}` | reorder (renumbers on disk), set doc type, delete input |
+| `POST .../files/{idx}/convert` `{target}` | convert one input; result appended as new input(s) |
+| `POST .../files/final` `{indices?}` · `POST .../files/combine` `{indices?}` · `DELETE .../files/output/{name}` | make finals (default: all typed) / combine (default: all) / delete a final or the combined PDF |
+| `POST .../files/adopt` `{name}` · `PUT .../files/upload-mode` `{upload_mode}` | adopt an untracked file / override upload mode |
+| `GET .../files/thumb/{name}?width=` · `GET .../files/download/{name}?inline=` | first-page PNG / file download or inline open |
+| `GET /files/tools` · `POST /files/convert` (multipart `file` + `target`) | tool availability / standalone converter: returns the file, or a zip when a PDF yields several images |
 | `POST/PUT/DELETE /sessions/{id}/qa/questions` ; `POST /sessions/{id}/qa/answer` ; `POST .../regenerate/{qid}` | Q&A |
 | `GET/PUT /settings` | config |
 
-LLM/Jev failures return HTTP 502 with the provider message (as in Resumate); Excel lock returns 423.
+LLM/Jev failures return HTTP 502 with the provider message (as in Resumate); Excel lock returns 423; conversion failures and invalid file operations 400; missing files 404; uploads over 50 MB 413.
 
 ## 15. Edge cases
 
@@ -282,6 +289,6 @@ LLM/Jev failures return HTTP 502 with the provider message (as in Resumate); Exc
 
 1. ✅ **Core, no UI**: config, naming, session store, Jev client + questions, schema builder, Claude client, Excel writer; a small CLI (`python -m backend.run --posting file.txt`) to validate end to end.
 2. ✅ **Webapp**: Dashboard, New application, Session Overview (tracker-row editor, pending-write banner + retry, posting text, Jev/LLM log). Files and Questions tabs are placeholders.
-3. **Files**: conversions, combine, thumbnails, reorder UI.
+3. ✅ **Files**: conversions, combine, thumbnails, reorder UI, standalone `/convert` page.
 4. **Q&A**.
 5. **Hardening**: backups, lock flow, re-extract diff, duplicate detection, logs.

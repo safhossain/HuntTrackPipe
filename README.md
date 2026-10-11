@@ -1,7 +1,7 @@
 # HuntTrackPipe
 
 # 🚧 UNDER CONSTRUCTION 🚧
-# STATUS: Step 2 of 5 done (core pipeline + CLI + webapp)
+# STATUS: Step 3 of 5 done (core pipeline + CLI + webapp + files)
 
 ## Issue to solve
 Logging every job application by hand (copying fields into a spreadsheet, making folders, renaming and merging documents, answering portal questions) is slow and error-prone.
@@ -11,7 +11,7 @@ A local pipeline that takes a pasted job posting and:
 1. Asks **Jev** (TypeSafe) typed pre-LLM questions: which fields exist, work mode, employment type, how documents must be uploaded.
 2. Builds a JSON schema from Jev's answers and has **Claude Haiku 5.5** extract only those fields.
 3. Creates a per-application folder and writes one row to `job_application_tracker.xlsx` (the only source of truth; no database).
-4. *(planned)* Renames, converts and combines application files into one PDF.
+4. Renames, converts and combines application files into one PDF.
 5. *(planned)* Answers application text-field questions from your own candidate context file.
 
 Complementary to [Resumate](../resumate) but deliberately decoupled: the two share files, not code.
@@ -22,7 +22,7 @@ Full design: [`docs/DESIGN.md`](docs/DESIGN.md).
 
 ### Prereqs
 - Python 3.11+ (developed on 3.14 in the shared `resumate_env` venv)
-- LibreOffice on PATH (needed from step 3, docx -> pdf)
+- LibreOffice (for Office -> PDF; auto-detected in `C:\Program Files\LibreOffice`, or set `files.soffice_path` in `htp.config.json`)
 - API keys in `.env` at the repo root:
   ```
   TYPESAFE_API_KEY=...
@@ -71,7 +71,9 @@ Starts the FastAPI backend on **http://127.0.0.1:8010** and the Vue UI on **http
 Screens:
 - **Dashboard** (`/`): every managed session with its row read back from Excel (status, outcome, applied date, days since, deadline), plus a list of unmanaged folders.
 - **New application** (`/new`): paste the posting, run Jev + Claude (either can be toggled off), review Jev's answers and the extracted fields, fill the manual fields (Applied_Date, Posting_URL, status, outcome, Applied_Through, Confirmation_#), then create the folder + row.
-- **Session** (`/sessions/{folder}`): Overview tab edits the tracker row (edited fields overwrite Excel, untouched fields never do); if Excel has the workbook open the write is kept as a pending write and a Retry button flushes it later. Log tab shows raw Jev/LLM output. Files and Questions tabs arrive in steps 3 and 4.
+- **Session** (`/sessions/{folder}`): Overview tab edits the tracker row (edited fields overwrite Excel, untouched fields never do); if Excel has the workbook open the write is kept as a pending write and a Retry button flushes it later. Files tab (below). Log tab shows raw Jev/LLM output. Questions tab arrives in step 4.
+- **Files tab**: drop files in (saved as `{count}_<name>.<ext>`), thumbnails, drag or ▲/▼ to reorder (renumbers on disk), pick a document type per file (guessed from the name), convert a file in place (PDF ⇄ DOCX, PDF → PNG/JPG, anything → PDF; the result is added as a new input), **Make final** → `{Candidate_Name}_{DocType}_{X}.<ext>`, **Combine → PDF** → `{Candidate_Name}_{X}.pdf` (non-PDF inputs are converted first, merged in display order). Files you drop into the folder by hand show up as *untracked* and can be adopted. Jev's upload-mode hint highlights the relevant button; you can override it.
+- **Convert** (`/convert`): standalone converter, nothing is stored. PDF → PNG/JPG gives one image per page (zipped).
 
 ## What it creates
 ```
@@ -79,14 +81,18 @@ JobHunting/Applications/
   job_application_tracker.xlsx
   .htp_backup/                                     # last 10 tracker copies, one per write
   R-204817_Shopify_Junior-Software-Engineer_2026-10-11/
-    session.json                                   # engine state (Jev/LLM output, files, Q&A)
+    session.json                                   # engine state (Jev/LLM output, file manifest, Q&A)
     posting.txt
+    0_resume.pdf  1_cover-letter.docx              # inputs, in display order
+    Safwan-Hossain_Resume_R-204817.pdf             # final (renamed copy)
+    Safwan-Hossain_R-204817.pdf                    # combined PDF
+    .converted/  .thumbs/                          # caches (safe to delete)
 ```
 Folder name: `{Requisition_ID}_{Organization}_{Position_Title}_{Date_Created}`. Missing parts become `null`; collisions get `_2`, `_3`, ...
 
 ## Roadmap
 1. ✅ Core: config, naming, Jev, schema builder, Claude, Excel writer, CLI
 2. ✅ Webapp: dashboard, new-application flow, session overview (incl. Excel-locked pending write + retry)
-3. Files: conversions, combine to PDF, thumbnails, reorder UI
+3. ✅ Files: conversions, combine to PDF, thumbnails, reorder UI, standalone converter
 4. Application questions (Q&A)
 5. Hardening: committed tests, re-extract diff, duplicate detection, logs

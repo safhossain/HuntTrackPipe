@@ -1,9 +1,16 @@
-# Core (step 1). Install into resumate_env: python -m pip install -r requirements.txt
+# Install into resumate_env: python -m pip install -r requirements.txt
+# Core
 fastapi
 uvicorn
+python-multipart
 pydantic>=2
 python-dotenv
 httpx
 anthropic
 openpyxl
-# Files (step 3): pypdf img2pdf pdf2docx pillow pymupdf
+# Files (convert / combine / thumbnails). docx -> pdf also needs LibreOffice on PATH.
+pymupdf
+pypdf
+img2pdf
+pdf2docx
+pillow

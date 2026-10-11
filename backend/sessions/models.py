@@ -61,12 +61,16 @@ class InputFile(BaseModel):
     file: str
     doc_type: str | None = None
     original: str
+    size: int | None = None
+    pages: int | None = None
+    added_at: str = Field(default_factory=utc_now)
 
 
 class FinalFile(BaseModel):
     file: str
     doc_type: str
     from_index: int | None = Field(default=None, alias="from")
+    at: str = Field(default_factory=utc_now)
 
     model_config = {"populate_by_name": True}
 
@@ -74,6 +78,7 @@ class FinalFile(BaseModel):
 class CombinedFile(BaseModel):
     file: str
     from_indices: list[int]
+    pages: int | None = None
     at: str = Field(default_factory=utc_now)
 
 

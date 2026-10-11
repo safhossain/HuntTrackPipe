@@ -22,12 +22,17 @@ Local, single-user job-application pipeline. Pasted posting -> Jev (TypeSafe) ty
 backend/
   config.py        Settings from htp.config.json (+ HTP_CONFIG override) and .env
   naming.py        sanitize, folder/file names, {X} token
-  pipeline.py      extract() + create_application(), shared by CLI and future API
+  pipeline.py      extract() + create_application(), shared by CLI and API
   run.py           CLI: python -m backend.run
+  columns.py       tracker column registry + dropdown options + /api/meta payload
+  main.py          FastAPI app (:8010), exception -> HTTP status mapping
+  api/             models.py, deps.py, routers/ (extract, sessions, files, settings)
   jev/             questions.py (question set + Excel mappings), client.py, derive.py
   llm/             schema_builder.py, prompts.py, client.py, postprocess.py
   excel/tracker.py openpyxl writer
+  files/           convert.py (soffice, pdf2docx, PyMuPDF, img2pdf), combine.py (pypdf), manager.py (FileManager: manifest <-> disk)
   sessions/        models.py (session.json), store.py
+frontend/          Vue 3 + Vite + Pinia + Tailwind v4 (:5180); views Dashboard, NewApplication, Session, Convert
 docs/DESIGN.md     design spec
 htp.config.json    non-secret settings
 JobHunting/        personal data (git-ignored: Applications/*, candidate_context.txt)
