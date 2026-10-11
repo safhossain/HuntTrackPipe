@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Any
 
+from .columns import MANUAL_COLUMNS
 from .config import Settings
 from .excel.tracker import Tracker, WriteReport
 from .jev.client import JevClient
@@ -20,8 +21,6 @@ from .llm.schema_builder import build_schema
 from .naming import folder_name
 from .sessions.models import JevDerived, JevRecord, LLMRecord, Posting, Review, Session, utc_now
 from .sessions.store import SessionStore
-
-MANUAL_COLUMNS = ("Applied_Date", "Posting_URL", "Application_Status", "Applied_Through", "Confirmation_#")
 
 
 @dataclass
@@ -135,7 +134,7 @@ def create_application(
     try:
         report = tracker.write_row(name, row)
     except Exception:
-        session.review.pending_write = row
+        session.review.pending_write = {"values": row, "force_columns": []}
         store.save(session)
         raise
     session.review.written_at = utc_now()

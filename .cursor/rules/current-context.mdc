@@ -5,20 +5,23 @@ alwaysApply: true
 
 # HuntTrackPipe - Current State (2026-10-11)
 
-## Done: step 1 of 5 (core + CLI)
-- Config, naming, session store, Jev client/questions/derive, schema builder, Claude client, post-processing, Excel writer, CLI.
-- Verified: 11 offline tests (naming, derive -> schema -> row values, Excel writer on a tracker copy, folder + row creation, lock handling); live dry runs on a rich and a sparse posting; full CLI run against a temp tracker copy, re-read via the Excel MCP (row, dates, formula, Folder hyperlink, table and dropdowns intact).
-- There is no committed test suite yet; tests were run from `%TEMP%`. Add `tests/` before step 5.
+## Done: steps 1-2 of 5
+- **Step 1 (core + CLI)**: config, naming, session store, Jev client/questions/derive, schema builder, Claude client, post-processing, Excel writer (`backend/excel/tracker.py`), `backend/pipeline.py` (`extract()`, `create_application()`), CLI `python -m backend.run`. Column lists / dropdown options live in `backend/columns.py`.
+- **Step 2 (webapp)**: FastAPI app `backend/main.py` + `backend/api/` (models, deps, routers `extract`, `sessions`, `settings`) on :8010; Vue 3 / Vite 7 / Pinia / Tailwind v4 / vue-router in `frontend/` on :5180 (`strictPort`, `/api` proxy). Root `npm run dev` runs both via concurrently. Screens: `DashboardView`, `NewApplicationView`, `SessionView` (tabs overview / files / questions / log; files + questions are placeholders).
+- Endpoints: `GET /api/health`, `/api/meta`, `/api/settings`, `GET|POST /api/sessions`, `GET /api/sessions/{folder}`, `PUT /api/sessions/{folder}/row` (`{values, force_columns}`), `POST /api/sessions/{folder}/row/retry`, `POST /api/extract`. Errors: TrackerLocked 423, TrackerError/ValueError 400, Jev/LLM 502, FileExistsError 409.
+- `review.pending_write` is `{values, force_columns}`; set only on 423 (lock), flushed by `/row/retry`.
+- Verified in the Cursor browser against a temp tracker copy (`HTP_CONFIG` pointing at `%TEMP%`): extraction, create (folder + row 2), edit + save, lock -> 423 -> pending banner -> retry overwrote the column. Re-read via the Excel MCP. `vue-tsc --noEmit` passes.
+- There is still no committed test suite; offline tests were run from `%TEMP%`. Add `tests/` before step 5.
 
 ## Next
-2. **Webapp**: FastAPI (`backend/main.py`, `backend/api/routers/`) on :8010 + Vue 3/Vite/Pinia/Tailwind in `frontend/` on :5180 (`strictPort: true`, `/api` proxy). Screens: Dashboard, New application, Session Overview. Root `npm run dev` runs both. Reuse `pipeline.extract()` / `create_application()`; don't duplicate logic in routers.
-3. **Files**: `backend/files/` (convert, combine with pypdf, PyMuPDF thumbnails), reorder UI. Libraries not installed yet: pypdf, img2pdf, pdf2docx, pillow (pymupdf is installed).
-4. **Q&A**: `backend/qa/answer.py`, `answers.md`.
-5. **Hardening**: pending-write retry UI, re-extract diff (`write_row(force_columns=...)` already supports it), duplicate-posting detection, logs.
+3. **Files**: `backend/files/` (convert, combine with pypdf, PyMuPDF thumbnails), upload/reorder/doc-type UI in the Session "files" tab. Libraries not installed yet: pypdf, img2pdf, pdf2docx, pillow (pymupdf is installed). Naming helpers already exist in `backend/naming.py` (`input_file_name`, `final_file_name`, `combined_file_name`, `DOC_TYPES`). `Session.files` model exists but nothing writes it.
+4. **Q&A**: `backend/qa/answer.py`, `answers.md`, candidate context from `JobHunting/candidate_context.txt` (user writes it; tell them when it's time).
+5. **Hardening**: committed `tests/`, re-extract diff (`write_row(force_columns=...)` supports it), duplicate-posting detection, logs.
 
 ## Tracker state
 Table `Applications` = `A1:S2`, headers end with `Folder` (column S). Row 2 is the empty seed row with the Days_Since_Applied formula in P2. Dropdowns cover whole columns E, F, J, M, Q. User keeps it closed while the engine runs.
 
-## Known gaps
-- `Session.files` / `qa` models exist but nothing writes them yet.
-- No API layer yet, so `pending_write` is only saved, never retried.
+## Testing conventions
+- Never run against the real tracker; copy it to `%TEMP%`, write a config there and set `HTP_CONFIG`.
+- Start the API without `--reload` from a background shell when testing from the agent; restart it after backend edits.
+- Keep scratch tests outside the repo; `git status` must stay clean of test artifacts.

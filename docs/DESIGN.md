@@ -204,7 +204,7 @@ Files:
 - New-row defaults: `Application_Status = Not Applied`, `Outcome = Pending`.
 - Fill-only-empty: a non-empty cell whose value differs is skipped and reported. "Re-extract" shows a per-cell diff and writes only approved cells.
 - Save: write to a temp file in the same directory, then `os.replace`. Before every save, copy the current file to `.htp_backup/` (keep last 10).
-- Lock: before saving, open the file for `r+b`; on `PermissionError` return HTTP 423, keep the payload in `session.pending_write`, UI shows "Close Excel and retry". Also refuses to run while `~$job_application_tracker.xlsx` exists.
+- Lock: before saving, open the file for `r+b`; on `PermissionError` return HTTP 423, keep the payload in `session.review.pending_write` as `{values, force_columns}` (so the retry overwrites the same columns the user meant to overwrite), UI shows "Close Excel and retry" with a Retry button. Also refuses to run while `~$job_application_tracker.xlsx` exists.
 - Read-back: opening a session reads the row and shows Excel's current values (Excel wins).
 
 ## 10. Files, conversions, CombinationEngine
@@ -254,11 +254,12 @@ Operations: add / edit / delete question (any time, before or after extraction),
 | Method + path | Purpose |
 |---|---|
 | `GET /health` | cold-start poll |
-| `GET /sessions` / `GET /sessions/{id}` | list / load (includes Excel read-back) |
-| `POST /extract/jev` | posting -> Jev answers + derived |
-| `POST /extract/llm` | derived + posting -> extracted values |
-| `POST /sessions` | create folder + session.json + Excel row |
-| `PUT /sessions/{id}/row` | write manual/edited fields (fill-only-empty; `?force=diff` for re-extract) |
+| `GET /meta` / `GET /settings` | column lists + dropdown options; key presence, paths, tracker status |
+| `GET /sessions` / `GET /sessions/{folder}` | list / load (includes Excel read-back and unmanaged folders) |
+| `POST /extract` | posting -> Jev answers + derived + LLM values in one call (`use_jev` / `use_llm` toggles) |
+| `POST /sessions` | create folder + session.json + Excel row (extraction + manual values + row overrides) |
+| `PUT /sessions/{folder}/row` | write edited fields; body `{values, force_columns}` — `force_columns` overwrite, others fill-only-empty |
+| `POST /sessions/{folder}/row/retry` | flush `review.pending_write` (`{values, force_columns}`) after Excel is closed |
 | `POST /sessions/{id}/files` / `PUT .../order` / `PUT .../{idx}` | upload, reorder, set doc type |
 | `POST /sessions/{id}/files/final` / `POST .../combine` / `POST /files/convert` | naming + combination + conversions |
 | `GET /sessions/{id}/files/{idx}/thumb` | thumbnail |
@@ -279,8 +280,8 @@ LLM/Jev failures return HTTP 502 with the provider message (as in Resumate); Exc
 
 ## 16. Implementation order
 
-1. **Core, no UI**: config, naming, session store, Jev client + questions, schema builder, Claude client, Excel writer; a small CLI (`python -m backend.run --posting file.txt`) to validate end to end.
-2. **Webapp**: Dashboard, New application, Session Overview.
+1. ✅ **Core, no UI**: config, naming, session store, Jev client + questions, schema builder, Claude client, Excel writer; a small CLI (`python -m backend.run --posting file.txt`) to validate end to end.
+2. ✅ **Webapp**: Dashboard, New application, Session Overview (tracker-row editor, pending-write banner + retry, posting text, Jev/LLM log). Files and Questions tabs are placeholders.
 3. **Files**: conversions, combine, thumbnails, reorder UI.
 4. **Q&A**.
 5. **Hardening**: backups, lock flow, re-extract diff, duplicate detection, logs.

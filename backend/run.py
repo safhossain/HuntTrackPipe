@@ -15,12 +15,13 @@ import sys
 from datetime import date
 from pathlib import Path
 
+from .columns import OPTIONS
 from .config import load_settings
 from .excel.tracker import TrackerError, TrackerLocked
 from .pipeline import create_application, extract
 
-STATUSES = ("Not Applied", "Applied", "Recruiter-Screening", "Technical Interview", "Final Round")
-APPLIED_THROUGH = ("Org-Portal", "Indeed", "LinkedIn", "Email", "Workday")
+STATUSES = tuple(OPTIONS["Application_Status"])
+APPLIED_THROUGH = tuple(OPTIONS["Applied_Through"])
 
 
 def _read_posting(arg: str) -> str:

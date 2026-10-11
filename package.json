@@ -1,0 +1,13 @@
+{
+  "name": "hunttrackpipe",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "dev": "concurrently --names \"API,UI\" --prefix-colors \"cyan,magenta\" \"npm run api\" \"npm run ui\"",
+    "api": "uvicorn backend.main:app --reload --reload-dir backend --port 8010",
+    "ui": "npm run dev --prefix frontend"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}

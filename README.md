@@ -1,7 +1,7 @@
 # HuntTrackPipe
 
 # 🚧 UNDER CONSTRUCTION 🚧
-# STATUS: Step 1 of 5 done (core pipeline + CLI)
+# STATUS: Step 2 of 5 done (core pipeline + CLI + webapp)
 
 ## Issue to solve
 Logging every job application by hand (copying fields into a spreadsheet, making folders, renaming and merging documents, answering portal questions) is slow and error-prone.
@@ -34,6 +34,9 @@ Full design: [`docs/DESIGN.md`](docs/DESIGN.md).
 Activate the venv, then from the repo root:
 > python -m pip install -r requirements.txt
 
+For the webapp (Node 20+):
+> npm install && npm --prefix frontend install
+
 ### Configure
 Edit `htp.config.json` (non-secret settings: paths, candidate name, Jev thresholds, model IDs).
 Set `HTP_CONFIG=<path>` to use a different config file, e.g. to point at a scratch copy of the tracker.
@@ -59,8 +62,16 @@ Other flags:
 | `--json` | machine-readable output |
 | `--confirmation` | Confirmation_# |
 
-### Webapp (step 2, not built yet)
-Will run on **API :8010** and **UI :5180**, so it can run alongside Resumate (`:8000` / `:5173`).
+### Webapp
+With the venv active, from the repo root:
+> npm run dev
+
+Starts the FastAPI backend on **http://127.0.0.1:8010** and the Vue UI on **http://localhost:5180** (`strictPort`; `/api` is proxied). Both ports differ from Resumate (`:8000` / `:5173`) so the two can run together. `npm run api` / `npm run ui` start them separately.
+
+Screens:
+- **Dashboard** (`/`): every managed session with its row read back from Excel (status, outcome, applied date, days since, deadline), plus a list of unmanaged folders.
+- **New application** (`/new`): paste the posting, run Jev + Claude (either can be toggled off), review Jev's answers and the extracted fields, fill the manual fields (Applied_Date, Posting_URL, status, outcome, Applied_Through, Confirmation_#), then create the folder + row.
+- **Session** (`/sessions/{folder}`): Overview tab edits the tracker row (edited fields overwrite Excel, untouched fields never do); if Excel has the workbook open the write is kept as a pending write and a Retry button flushes it later. Log tab shows raw Jev/LLM output. Files and Questions tabs arrive in steps 3 and 4.
 
 ## What it creates
 ```
@@ -75,7 +86,7 @@ Folder name: `{Requisition_ID}_{Organization}_{Position_Title}_{Date_Created}`. 
 
 ## Roadmap
 1. ✅ Core: config, naming, Jev, schema builder, Claude, Excel writer, CLI
-2. Webapp: dashboard, new-application flow, session overview
+2. ✅ Webapp: dashboard, new-application flow, session overview (incl. Excel-locked pending write + retry)
 3. Files: conversions, combine to PDF, thumbnails, reorder UI
 4. Application questions (Q&A)
-5. Hardening: lock-retry flow, re-extract diff, duplicate detection, logs
+5. Hardening: committed tests, re-extract diff, duplicate detection, logs
