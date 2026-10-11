@@ -4,12 +4,14 @@ posting -> Jev -> derive -> schema -> Claude -> row values -> folder + session +
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Any
 
 from .columns import MANUAL_COLUMNS
 from .config import Settings
+from .duplicates import DuplicateError, find_duplicates, posting_hash
 from .excel.tracker import Tracker, WriteReport
 from .jev.client import JevClient
 from .jev.derive import derive
@@ -21,6 +23,8 @@ from .llm.schema_builder import build_schema
 from .naming import folder_name
 from .sessions.models import JevDerived, JevRecord, LLMRecord, Posting, Review, Session, utc_now
 from .sessions.store import SessionStore
+
+log = logging.getLogger("htp.pipeline")
 
 
 @dataclass
@@ -92,11 +96,13 @@ def create_application(
     extraction: Extraction,
     manual: dict[str, Any] | None = None,
     date_created: date | None = None,
+    allow_duplicate: bool = False,
 ) -> tuple[Session, WriteReport]:
     """Create the folder + session.json, then write the Excel row.
 
     Order matters: the Excel lock is checked first so a locked workbook does not
-    leave an orphan folder behind.
+    leave an orphan folder behind. Raises ``DuplicateError`` when the posting
+    matches an existing session unless ``allow_duplicate``.
     """
     store = SessionStore(cfg.applications_abs)
     tracker = Tracker(cfg.tracker_abs, backups_keep=cfg.backups_keep)
@@ -104,6 +110,11 @@ def create_application(
 
     today = date_created or date.today()
     vals = dict(extraction.values)
+    if not allow_duplicate:
+        hits = find_duplicates(cfg, posting_text, vals)
+        if hits:
+            log.info("duplicate posting refused: %s", [h.model_dump() for h in hits])
+            raise DuplicateError(hits)
     manual = {k: v for k, v in (manual or {}).items() if v not in (None, "")}
     unknown = [k for k in manual if k not in MANUAL_COLUMNS]
     if unknown:
@@ -123,13 +134,14 @@ def create_application(
     row = {**vals, **manual}
     session = Session(
         folder=name,
-        posting=Posting(text=posting_text, url=posting_url),
+        posting=Posting(text=posting_text, url=posting_url, hash=posting_hash(posting_text)),
         jev=extraction.jev,
         llm=extraction.llm,
         review=Review(values=row),
         upload_mode=extraction.derived.upload_mode,
     )
     store.create(session)
+    log.info("created %s (jev=%s llm=%s)", name, bool(extraction.jev), bool(extraction.llm))
 
     try:
         report = tracker.write_row(name, row)

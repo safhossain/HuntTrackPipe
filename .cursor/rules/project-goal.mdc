@@ -5,7 +5,7 @@ alwaysApply: true
 
 # HuntTrackPipe - Project Goal
 
-Local, single-user job-application pipeline. Pasted posting -> Jev (TypeSafe) typed questions -> dynamic JSON schema -> Claude Haiku 5.5 extraction -> per-application folder + one row in `JobHunting/Applications/job_application_tracker.xlsx`. Planned: file conversion/combining, application Q&A. Full spec: `docs/DESIGN.md` (keep it in sync when decisions change).
+Local, single-user job-application pipeline. Pasted posting -> Jev (TypeSafe) typed questions -> dynamic JSON schema -> Claude Haiku 5.5 extraction -> per-application folder + one row in `JobHunting/Applications/job_application_tracker.xlsx`; plus file conversion/combining, application Q&A, re-extract diff, duplicate detection, Settings page. Full spec: `docs/DESIGN.md` (keep it in sync when decisions change).
 
 ## Key decisions (agreed with user, do not change without asking)
 - **Excel is the only source of truth for tracker columns.** No database. Non-tracker state lives in `<application folder>/session.json`.
@@ -16,6 +16,8 @@ Local, single-user job-application pipeline. Pasted posting -> Jev (TypeSafe) ty
 - **File names:** inputs `{count}_<name>.<ext>`; separate finals `{Candidate_Name}_{DocType}_{X}.<ext>`; combined `{Candidate_Name}_{X}.pdf` (combined output is PDF only).
 - **Q&A context** is one user-written `JobHunting/candidate_context.txt`, read fresh every call.
 - **Ports:** API 8010, UI 5180 (Resumate uses 8000 / 5173; both must run side by side).
+- **Duplicates are refused, not blocked:** `POST /sessions` returns 409 `DuplicateError` unless `allow_duplicate`; the UI confirms. **Re-extract never writes** - the user applies chosen columns via `PUT /row` + `force_columns`.
+- **Logs never contain** posting text, candidate context or answers.
 
 ## Repo layout
 ```
@@ -25,15 +27,18 @@ backend/
   pipeline.py      extract() + create_application(), shared by CLI and API
   run.py           CLI: python -m backend.run
   columns.py       tracker column registry + dropdown options + /api/meta payload
-  main.py          FastAPI app (:8010), exception -> HTTP status mapping
-  api/             models.py, deps.py, routers/ (extract, sessions, files, qa, settings)
+  duplicates.py    posting_hash(), find_duplicates(), DuplicateError (409)
+  logs.py          setup_logging() -> console + Applications/.htp_logs/htp.log; tail()
+  main.py          FastAPI app (:8010), lifespan starts logging, exception -> HTTP status mapping
+  api/             models.py, deps.py, routers/ (extract, sessions [+reextract], files, qa, settings [+PUT, /logs])
   jev/             questions.py (question set + Excel mappings), client.py, derive.py
   llm/             schema_builder.py, prompts.py, client.py, postprocess.py
   excel/tracker.py openpyxl writer
   files/           convert.py (soffice, pdf2docx, PyMuPDF, img2pdf), combine.py (pypdf), manager.py (FileManager: manifest <-> disk)
   qa/answer.py     answer_questions() (one structured call, limit check + re-ask), answers.md rendering
   sessions/        models.py (session.json), store.py
-frontend/          Vue 3 + Vite + Pinia + Tailwind v4 (:5180); views Dashboard, NewApplication, Session, Convert
+frontend/          Vue 3 + Vite + Pinia + Tailwind v4 (:5180); views Dashboard, NewApplication, Session, Convert, Settings
+tests/             pytest suite (offline, synthetic tracker, fake Jev/Claude); run `python -m pytest`
 docs/DESIGN.md     design spec
 htp.config.json    non-secret settings
 JobHunting/        personal data (git-ignored: Applications/*, candidate_context.txt)

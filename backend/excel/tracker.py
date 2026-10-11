@@ -9,6 +9,7 @@
 """
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 from dataclasses import dataclass, field
@@ -33,6 +34,7 @@ DATE_COLS = {"Applied_Date", "Deadline"}
 NEW_ROW_DEFAULTS = {"Application_Status": "Not Applied", "Outcome": "Pending"}
 DATE_FORMAT = "yyyy-mm-dd"
 BACKUP_DIR = ".htp_backup"
+log = logging.getLogger("htp.tracker")
 
 
 class TrackerError(RuntimeError):
@@ -74,11 +76,13 @@ class Tracker:
             raise TrackerError(f"Tracker not found: {self.path}")
         owner = self.path.with_name(f"~${self.path.name}")
         if owner.exists():
+            log.warning("tracker locked: %s present", owner.name)
             raise TrackerLocked(f"{self.path.name} appears to be open in Excel (found {owner.name}). Close it and retry.")
         try:
             with open(self.path, "r+b"):
                 pass
         except PermissionError as exc:
+            log.warning("tracker locked: PermissionError on r+b")
             raise TrackerLocked(f"{self.path.name} is locked by another program. Close it and retry.") from exc
 
     def _open(self):
@@ -231,4 +235,8 @@ class Tracker:
                 ws.cell(row, headers[column]).value = formula
 
         self._save(wb)
+        log.info(
+            "row %d %s folder=%s written=%s skipped=%s forced=%s",
+            row, "created" if created else "updated", folder, sorted(report.written), sorted(report.skipped), sorted(force_columns),
+        )
         return report

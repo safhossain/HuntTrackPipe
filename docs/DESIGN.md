@@ -33,9 +33,13 @@ Run: `npm run dev` at repo root -> uvicorn on `:8010` + Vite on `:5180` (`strict
 ```
 HuntTrackPipe/
   backend/
-    main.py                 # FastAPI app + routers
+    main.py                 # FastAPI app + routers + error handlers + logging start-up
     config.py               # loads htp.config.json + .env; Settings model
     naming.py               # sanitize(), folder_name(), final_file_name()
+    columns.py              # tracker column registry + dropdown options
+    pipeline.py             # extract() + create_application(); shared by CLI and API
+    duplicates.py           # posting hash + find_duplicates(); DuplicateError (409)
+    logs.py                 # console + rotating file log under Applications/.htp_logs/
     jev/
       client.py             # one call: state + questions -> answers (retry/backoff)
       questions.py          # the fixed question set + Excel value mapping
@@ -56,8 +60,10 @@ HuntTrackPipe/
     qa/
       answer.py             # pending questions -> one Claude call -> answers.md
     api/routers/
-      sessions.py, extract.py, excel.py, files.py, qa.py, settings.py
+      sessions.py, extract.py, files.py, qa.py, settings.py
   frontend/                 # Vue app
+  tests/                    # pytest suite (offline; synthetic tracker + fake Jev/Claude)
+  pytest.ini
   docs/DESIGN.md
   htp.config.json           # non-secret settings (see section 13)
   JobHunting/
@@ -232,10 +238,10 @@ Operations: add one or several questions (one per line) with optional limit; edi
 ## 12. UI screens
 
 1. **Dashboard** - list of application folders with status/outcome read from Excel; "New application".
-2. **New application** - paste posting + URL -> Run -> three panels: Jev results (chips with probability/confidence), extracted fields (editable form), manual fields (Applied_Date, Posting_URL, Application_Status, Applied_Through, Confirmation_#). "Create" makes the folder and writes the row.
-3. **Session** - tabs: Overview (Excel read-back, edit manual fields, write), Files (section 10), Questions (section 11), Log (raw Jev/LLM payloads, usage, timings).
+2. **New application** - paste posting + URL -> Run -> three panels: Jev results (chips with probability/confidence), extracted fields (editable form), manual fields (Applied_Date, Posting_URL, Application_Status, Applied_Through, Confirmation_#). A "Possible duplicate" banner lists matching sessions (section 15); "Create" makes the folder and writes the row, asking for confirmation when a duplicate was flagged.
+3. **Session** - tabs: Overview (Excel read-back, edit manual fields, write; **Re-extract** card runs Jev/LLM again on the stored posting and shows a per-column diff against the row with checkboxes; "Apply" writes the chosen columns with `force_columns`), Files (section 10), Questions (section 11), Log (raw Jev/LLM payloads of the latest run, usage).
 4. **Convert** - standalone converter (section 10); nothing is stored.
-5. **Settings** - edits `htp.config.json`; shows key presence (never the keys). *(not built yet; key presence is shown in the header)*
+5. **Settings** - edits `htp.config.json` through `PUT /settings` (partial, deep-merged, validated; `settings()` cache cleared); shows key presence (never the keys), tracker / candidate-context presence, resolved paths, and a tail of the log file.
 
 ## 13. Config (`htp.config.json`)
 
@@ -259,10 +265,11 @@ Operations: add one or several questions (one per line) with optional limit; edi
 | `GET /health` | cold-start poll |
 | `GET /meta` / `GET /settings` | column lists + dropdown options; key presence, paths, tracker status |
 | `GET /sessions` / `GET /sessions/{folder}` | list / load (includes Excel read-back and unmanaged folders) |
-| `POST /extract` | posting -> Jev answers + derived + LLM values in one call (`use_jev` / `use_llm` toggles) |
-| `POST /sessions` | create folder + session.json + Excel row (extraction + manual values + row overrides) |
+| `POST /extract` | posting -> Jev answers + derived + LLM values in one call (`use_jev` / `use_llm` toggles); also returns `duplicates: [{folder, reason}]` |
+| `POST /sessions` | create folder + session.json + Excel row (extraction + manual values + row overrides); 409 `DuplicateError` (with `duplicates`) unless `allow_duplicate: true` |
 | `PUT /sessions/{folder}/row` | write edited fields; body `{values, force_columns}` — `force_columns` overwrite, others fill-only-empty |
 | `POST /sessions/{folder}/row/retry` | flush `review.pending_write` (`{values, force_columns}`) after Excel is closed |
+| `POST /sessions/{folder}/reextract` `{use_jev, use_llm}` | run extraction again on the stored posting; returns `{extraction, row, diff:[{column, current, proposed, changed}]}` over the extracted columns; writes nothing to Excel, replaces `jev`/`llm` in session.json |
 | `GET|POST /sessions/{folder}/files` | manifest view (`FilesView`: files, upload mode, required docs, untracked, missing, `x`, tools) / multipart upload (`files[]`) |
 | `PUT .../files/order` `{order}` · `PUT .../files/{idx}` `{doc_type}` · `DELETE .../files/{idx}` | reorder (renumbers on disk), set doc type, delete input |
 | `POST .../files/{idx}/convert` `{target}` | convert one input; result appended as new input(s) |
@@ -273,13 +280,19 @@ Operations: add one or several questions (one per line) with optional limit; edi
 | `GET /sessions/{folder}/qa` | `QAView`: questions, usage, context-file presence + path, `answers.md` presence, org/title |
 | `POST .../qa/questions` `{questions:[{text, limit?}]}` · `PUT .../qa/questions/order` `{order}` · `PUT .../qa/questions/{qid}` `{text?, limit?, clear_limit?, answer?}` · `DELETE .../qa/questions/{qid}` | manage questions; `answer` = manual answer |
 | `POST .../qa/answer` `{ids?}` · `POST .../qa/regenerate/{qid}` `{feedback?}` | answer pending (or given ids) in one call / redo one with feedback |
-| `GET/PUT /settings` | config |
+| `GET/PUT /settings` | config view / partial update `{config}` written to `htp.config.json` (400 with field names on validation error) |
+| `GET /logs?lines=` | tail of `Applications/.htp_logs/htp.log` (1-2000 lines) |
 
-LLM/Jev failures return HTTP 502 with the provider message (as in Resumate); Excel lock returns 423; conversion failures and invalid file operations 400; missing files 404; uploads over 50 MB 413; missing candidate context 412.
+LLM/Jev failures return HTTP 502 with the provider message (as in Resumate); Excel lock returns 423; duplicate posting 409 (`type: "DuplicateError"`); conversion failures and invalid file operations 400; missing files 404; uploads over 50 MB 413; missing candidate context 412.
+
+### Logging
+
+`logs.setup_logging(cfg)` attaches a console handler and a `RotatingFileHandler` (2 MB x 5) at `<applications_dir>/.htp_logs/htp.log` to the `htp` logger; modules log under `htp.jev`, `htp.llm`, `htp.tracker`, `htp.pipeline`, `htp.files`, `htp.qa`, `htp.api`. Every Jev/Claude call (model, tokens, duration, attempts), every tracker write (row, written/skipped/forced columns), lock refusals, duplicate refusals, file operations and Q&A runs are logged at INFO; provider failures at WARNING/ERROR. The CLI logs to the same file with a quiet console. The API never logs posting text, candidate context or answers.
 
 ## 15. Edge cases
 
-- Posting pasted twice: warn when `posting.txt` hash matches an existing session.
+- Posting pasted twice: `duplicates.find_duplicates()` compares the normalised posting hash (`posting.hash` in session.json; computed on the fly for older sessions) and the extracted Requisition_ID (+ Organization when both have one) against every session. `POST /extract` reports hits; `POST /sessions` refuses with 409 unless `allow_duplicate`; the UI shows a banner and asks for confirmation. The CLI has `--allow-duplicate`.
+- Re-extraction: `POST /sessions/{f}/reextract` never writes; the diff is computed against the Excel row (falls back to `review.values` when the workbook is unreadable) and applied by the user through `PUT /row` with `force_columns`.
 - Jev 429/529: SDK backoff; surface after 3 attempts.
 - LLM returns a value for a field Jev gated out: impossible by construction (field not in schema).
 - Role categories > 3 or empty: truncate / `null`.
@@ -293,4 +306,8 @@ LLM/Jev failures return HTTP 502 with the provider message (as in Resumate); Exc
 2. ✅ **Webapp**: Dashboard, New application, Session Overview (tracker-row editor, pending-write banner + retry, posting text, Jev/LLM log). Files and Questions tabs are placeholders.
 3. ✅ **Files**: conversions, combine, thumbnails, reorder UI, standalone `/convert` page.
 4. ✅ **Q&A**.
-5. **Hardening**: backups, lock flow, re-extract diff, duplicate detection, logs.
+5. ✅ **Hardening**: committed `tests/` (pytest, offline), re-extract diff, duplicate detection, logs, Settings page. Backups and the lock flow were already in place from step 1-2.
+
+## 17. Tests
+
+`python -m pytest` from the repo root (venv active). `tests/conftest.py` points `HTP_CONFIG` at a scratch config before `backend` is imported and gives every test a fresh Applications dir, a synthetic tracker (19 headers, table `Applications`, seed row with the formula) and a candidate-context file under `tmp_path`. Jev and Claude are never called: `test_jev_schema.py` feeds synthetic answers to `derive()`, `test_qa.py` uses a scripted fake client, and `test_api.py` monkeypatches `extract` / `ClaudeClient` in the routers and drives the whole API through `TestClient`. LibreOffice is not required (PDF/PNG only).

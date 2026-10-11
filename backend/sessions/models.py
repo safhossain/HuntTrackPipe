@@ -19,6 +19,7 @@ def utc_now() -> str:
 class Posting(BaseModel):
     text: str
     url: str | None = None
+    hash: str | None = None  # posting_hash(text); None for sessions created before step 5
 
 
 class JevDerived(BaseModel):

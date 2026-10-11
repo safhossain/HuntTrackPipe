@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
-import { api, type ExtractResponse, type Row, type RowValue } from '../api/client'
+import { RouterLink, useRouter } from 'vue-router'
+import { ApiError, api, type DuplicateHit, type ExtractResponse, type Row, type RowValue } from '../api/client'
 import FieldInput from '../components/FieldInput.vue'
 import JevPanel from '../components/JevPanel.vue'
 import { useAppStore } from '../stores/app'
@@ -18,6 +18,7 @@ const extracting = ref(false)
 const creating = ref(false)
 
 const result = ref<ExtractResponse | null>(null)
+const duplicates = ref<DuplicateHit[]>([])
 const values = reactive<Row>({})
 const manual = reactive<Row>({ Application_Status: 'Not Applied', Outcome: 'Pending' })
 
@@ -35,6 +36,7 @@ async function runExtract() {
   try {
     const r = await api.extract(posting.value, useJev.value, useLlm.value)
     result.value = r
+    duplicates.value = r.duplicates ?? []
     for (const c of extractedCols.value) values[c] = r.values[c] ?? null
     if (url.value && !manual.Posting_URL) manual.Posting_URL = url.value
     for (const w of r.warnings) app.toast(w, 'info', 8000)
@@ -45,8 +47,13 @@ async function runExtract() {
   }
 }
 
-async function create() {
+async function create(allowDuplicate = false) {
   if (!result.value) return
+  if (!allowDuplicate && duplicates.value.length) {
+    const list = duplicates.value.map((d) => `${d.folder} (${d.reason})`).join('\n')
+    if (!confirm(`This posting looks like an existing application:\n\n${list}\n\nCreate a second application anyway?`)) return
+    allowDuplicate = true
+  }
   creating.value = true
   try {
     const { session, report } = await api.createSession({
@@ -54,12 +61,19 @@ async function create() {
       posting_url: url.value.trim() || null,
       extraction: { ...result.value, values: { ...values } },
       manual: { ...manual },
+      allow_duplicate: allowDuplicate,
     })
     app.toast(`Created ${session.folder} (row ${report.row})`, 'success')
     const skipped = Object.keys(report.skipped)
     if (skipped.length) app.toast(`Not overwritten (cell already had a value): ${skipped.join(', ')}`, 'info', 8000)
     router.push({ name: 'session', params: { folder: session.folder } })
   } catch (e) {
+    if (e instanceof ApiError && e.isDuplicate) {
+      // Server-side check caught something the extract step did not (e.g. a session created meanwhile).
+      duplicates.value = e.duplicates
+      creating.value = false
+      return create(false)
+    }
     app.toast(errorText(e), 'error', 10000)
   } finally {
     creating.value = false
@@ -98,6 +112,17 @@ const hintFor = (col: string) => {
       <p class="text-xs text-slate-500">{{ posting.length.toLocaleString() }} chars · ~{{ Math.round(posting.length / 3.5).toLocaleString() }} tokens</p>
     </div>
 
+    <div v-if="result && duplicates.length" class="rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+      <p class="font-medium">Possible duplicate</p>
+      <ul class="mt-1 list-disc pl-5">
+        <li v-for="d in duplicates" :key="d.folder">
+          <RouterLink :to="{ name: 'session', params: { folder: d.folder } }" class="underline">{{ d.folder }}</RouterLink>
+          <span class="text-amber-700"> · {{ d.reason }}</span>
+        </li>
+      </ul>
+      <p class="mt-1 text-xs text-amber-700">You will be asked to confirm before a second application is created.</p>
+    </div>
+
     <div v-if="result" class="grid gap-4 lg:grid-cols-[22rem_1fr]">
       <JevPanel :jev="result.jev" :derived="result.derived" :warnings="result.warnings" />
 
@@ -121,7 +146,7 @@ const hintFor = (col: string) => {
 
         <div class="flex items-center justify-end gap-3">
           <span class="text-xs text-slate-500">Creates the folder, posting.txt, session.json and the tracker row. Close Excel first.</span>
-          <button class="btn-primary" :disabled="creating" @click="create">{{ creating ? 'Creating…' : 'Create application' }}</button>
+          <button class="btn-primary" :disabled="creating" @click="create()">{{ creating ? 'Creating…' : 'Create application' }}</button>
         </div>
       </div>
     </div>

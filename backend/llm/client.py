@@ -6,12 +6,15 @@ set low; ``temperature`` / ``top_p`` / ``top_k`` must not be sent.
 from __future__ import annotations
 
 import json
+import logging
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
 from ..config import LLMSettings, api_key
 
 CHARS_PER_TOKEN = 3.5
+log = logging.getLogger("htp.llm")
 
 
 class LLMError(RuntimeError):
@@ -63,23 +66,27 @@ class ClaudeClient:
         }
 
         last_err: str | None = None
+        t0 = time.perf_counter()
         for attempt in range(2):
             try:
                 msg = self._client.messages.create(**kwargs)
             except Exception as exc:  # transport / API error -> one retry
                 last_err = f"{type(exc).__name__}: {exc}"
+                log.warning("llm attempt %d failed: %s", attempt + 1, last_err)
                 continue
             text = "".join(getattr(b, "text", "") for b in msg.content if getattr(b, "type", "") == "text")
             if not text:
                 last_err = f"No text block (stop_reason={getattr(msg, 'stop_reason', None)})"
+                log.warning("llm attempt %d: %s", attempt + 1, last_err)
                 continue
             try:
                 output = json.loads(text)
             except json.JSONDecodeError as exc:
                 last_err = f"Invalid JSON from model: {exc}"
+                log.warning("llm attempt %d: %s", attempt + 1, last_err)
                 continue
             usage = getattr(msg, "usage", None)
-            return LLMResult(
+            result = LLMResult(
                 model=getattr(msg, "model", model),
                 output=output,
                 usage={
@@ -88,4 +95,9 @@ class ClaudeClient:
                 },
                 warnings=warnings,
             )
+            log.info(
+                "llm ok model=%s est_in=%d in=%s out=%s attempt=%d %.1fs",
+                result.model, est, result.usage["input_tokens"], result.usage["output_tokens"], attempt + 1, time.perf_counter() - t0,
+            )
+            return result
         raise LLMError(f"LLM call failed: {last_err}")

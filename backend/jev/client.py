@@ -5,6 +5,7 @@ exponential backoff and honours ``retry-after``.
 """
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -12,6 +13,8 @@ from typing import Any
 import httpx
 
 from ..config import JevSettings, api_key
+
+log = logging.getLogger("htp.jev")
 
 # Jev caps state + the longest question at 32k tokens; stay under with a char estimate.
 CHARS_PER_TOKEN = 3.5
@@ -50,6 +53,7 @@ class JevClient:
         url = f"{self.cfg.base_url.rstrip('/')}/v1/systemone"
 
         last_err: str | None = None
+        t0 = time.perf_counter()
         with httpx.Client(timeout=self.cfg.timeout_s) as http:
             for attempt in range(1, self.cfg.max_attempts + 1):
                 try:
@@ -66,11 +70,18 @@ class JevClient:
                     )
                     if warning:
                         out.warnings.append(warning)
+                    log.info(
+                        "jev ok model=%s questions=%d chars=%d attempt=%d %.1fs usage=%s",
+                        out.model, len(questions), len(text), attempt, time.perf_counter() - t0, out.usage,
+                    )
                     return out
                 if resp is not None:
                     last_err = f"HTTP {resp.status_code}: {resp.text[:500]}"
+                    log.warning("jev attempt %d failed: %s", attempt, last_err)
                     if resp.status_code not in RETRY_STATUSES:
                         break
+                else:
+                    log.warning("jev attempt %d failed: %s", attempt, last_err)
                 if attempt < self.cfg.max_attempts:
                     delay = 2 ** (attempt - 1)
                     if resp is not None and resp.headers.get("retry-after"):

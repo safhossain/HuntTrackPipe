@@ -1,19 +1,35 @@
 """FastAPI app.  Run:  uvicorn backend.main:app --reload --reload-dir backend --port 8010"""
 from __future__ import annotations
 
-import traceback
+import logging
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from .api.routers import extract, files, qa, sessions, settings
+from .config import settings as get_settings
+from .duplicates import DuplicateError
 from .excel.tracker import TrackerError, TrackerLocked
 from .files.convert import ConversionError
 from .jev.client import JevError
 from .llm.client import LLMError
+from .logs import setup_logging
 from .qa.answer import CandidateContextMissing
 
-app = FastAPI(title="HuntTrackPipe API", version="0.1.0")
+log = logging.getLogger("htp.api")
+
+
+@asynccontextmanager
+async def _lifespan(_: FastAPI):
+    cfg = get_settings()
+    path = setup_logging(cfg)
+    log.info("API started; applications_dir=%s tracker=%s log=%s", cfg.applications_abs, cfg.tracker_abs, path)
+    yield
+    log.info("API stopped")
+
+
+app = FastAPI(title="HuntTrackPipe API", version="0.1.0", lifespan=_lifespan)
 
 API = "/api"
 app.include_router(extract.router, prefix=API)
@@ -44,14 +60,22 @@ async def _tracker(_: Request, exc: TrackerError):
 
 @app.exception_handler(JevError)
 async def _jev(_: Request, exc: JevError):
-    print(f"[jev] {exc}")
+    log.error("jev: %s", exc)
     return _err(502, exc)
 
 
 @app.exception_handler(LLMError)
 async def _llm(_: Request, exc: LLMError):
-    print(f"[llm] {exc}")
+    log.error("llm: %s", exc)
     return _err(502, exc)
+
+
+@app.exception_handler(DuplicateError)
+async def _duplicate(_: Request, exc: DuplicateError):
+    return JSONResponse(
+        status_code=409,
+        content={"detail": str(exc), "type": "DuplicateError", "duplicates": [d.model_dump() for d in exc.hits]},
+    )
 
 
 @app.exception_handler(FileExistsError)
@@ -71,7 +95,7 @@ async def _missing(_: Request, exc: FileNotFoundError):
 
 @app.exception_handler(ConversionError)
 async def _conversion(_: Request, exc: ConversionError):
-    print(f"[files] {exc}")
+    log.error("files: %s", exc)
     return _err(400, exc)
 
 
@@ -83,5 +107,5 @@ async def _value(_: Request, exc: ValueError):
 @app.exception_handler(RuntimeError)
 async def _runtime(_: Request, exc: RuntimeError):
     # e.g. missing API key from config.api_key()
-    traceback.print_exc()
+    log.exception("unhandled: %s", exc)
     return _err(500, exc)

@@ -11,13 +11,16 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import sys
 from datetime import date
 from pathlib import Path
 
 from .columns import OPTIONS
 from .config import load_settings
+from .duplicates import DuplicateError
 from .excel.tracker import TrackerError, TrackerLocked
+from .logs import setup_logging
 from .pipeline import create_application, extract
 
 STATUSES = tuple(OPTIONS["Application_Status"])
@@ -50,10 +53,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--no-llm", action="store_true", help="skip the LLM; only Jev direct values are used")
     p.add_argument("--dry-run", action="store_true", help="extract and print only; no folder, no Excel write")
     p.add_argument("-y", "--yes", action="store_true", help="do not ask before creating folder + row")
+    p.add_argument("--allow-duplicate", action="store_true", help="create even if the posting matches an existing application")
     p.add_argument("--json", action="store_true", help="print machine-readable JSON instead of sections")
     a = p.parse_args(argv)
 
     cfg = load_settings()
+    setup_logging(cfg, console_level=logging.WARNING)  # file gets everything; console stays quiet
     posting = _read_posting(a.posting).strip()
     if not posting:
         print("Posting is empty.", file=sys.stderr)
@@ -113,8 +118,12 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         session, report = create_application(
-            cfg, posting_text=posting, posting_url=a.url, extraction=ex, manual=manual
+            cfg, posting_text=posting, posting_url=a.url, extraction=ex, manual=manual,
+            allow_duplicate=a.allow_duplicate,
         )
+    except DuplicateError as exc:
+        print(f"\n{exc} (re-run with --allow-duplicate)", file=sys.stderr)
+        return 5
     except TrackerLocked as exc:
         print(f"\nExcel is locked: {exc}", file=sys.stderr)
         return 3

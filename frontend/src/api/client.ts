@@ -3,13 +3,19 @@
 export class ApiError extends Error {
   status: number
   type?: string
-  constructor(status: number, detail: string, type?: string) {
+  /** Filled for 409 DuplicateError responses. */
+  duplicates: DuplicateHit[]
+  constructor(status: number, detail: string, type?: string, duplicates: DuplicateHit[] = []) {
     super(detail)
     this.status = status
     this.type = type
+    this.duplicates = duplicates
   }
   get isLocked() {
     return this.status === 423
+  }
+  get isDuplicate() {
+    return this.status === 409 && this.type === 'DuplicateError'
   }
 }
 
@@ -21,14 +27,16 @@ async function raw(path: string, init?: RequestInit, json = true): Promise<Respo
   if (!res.ok) {
     let detail = res.statusText
     let type: string | undefined
+    let duplicates: DuplicateHit[] = []
     try {
       const body = await res.json()
       detail = typeof body.detail === 'string' ? body.detail : JSON.stringify(body.detail ?? body)
       type = body.type
+      if (Array.isArray(body.duplicates)) duplicates = body.duplicates
     } catch {
       /* non-JSON error body */
     }
-    throw new ApiError(res.status, detail, type)
+    throw new ApiError(res.status, detail, type, duplicates)
   }
   return res
 }
@@ -127,12 +135,36 @@ export interface LLMRecord {
   usage: Record<string, unknown>
 }
 
+export interface DuplicateHit {
+  folder: string
+  reason: string
+}
+
 export interface ExtractResponse {
   jev: JevRecord | null
   llm: LLMRecord | null
   derived: JevDerived
   values: Row
   warnings: string[]
+  duplicates: DuplicateHit[]
+}
+
+export interface DiffEntry {
+  column: string
+  current: RowValue
+  proposed: RowValue
+  changed: boolean
+}
+
+export interface ReextractResponse {
+  extraction: ExtractResponse
+  row: Row | null
+  diff: DiffEntry[]
+}
+
+export interface LogsResponse {
+  path: string
+  lines: string[]
 }
 
 export interface WriteReport {
@@ -223,7 +255,7 @@ export interface Session {
   session_id: string
   created_at: string
   folder: string
-  posting: { text: string; url: string | null }
+  posting: { text: string; url: string | null; hash: string | null }
   jev: JevRecord | null
   llm: LLMRecord | null
   review: { values: Row; written_at: string | null; pending_write: { values: Row; force_columns: string[] } | null }
@@ -256,12 +288,20 @@ export interface SessionDetail {
 export const api = {
   meta: () => request<Meta>('/meta'),
   settings: () => request<SettingsView>('/settings'),
+  updateSettings: (config: Record<string, unknown>) =>
+    request<SettingsView>('/settings', { method: 'PUT', body: JSON.stringify({ config }) }),
+  logs: (lines = 200) => request<LogsResponse>(`/logs?lines=${lines}`),
   extract: (posting_text: string, use_jev: boolean, use_llm: boolean) =>
     request<ExtractResponse>('/extract', { method: 'POST', body: JSON.stringify({ posting_text, use_jev, use_llm }) }),
   sessions: () => request<SessionListResponse>('/sessions'),
   session: (folder: string) => request<SessionDetail>(`/sessions/${encodeURIComponent(folder)}`),
-  createSession: (body: { posting_text: string; posting_url: string | null; extraction: ExtractResponse; manual: Row }) =>
+  createSession: (body: { posting_text: string; posting_url: string | null; extraction: ExtractResponse; manual: Row; allow_duplicate?: boolean }) =>
     request<{ session: Session; report: WriteReport }>('/sessions', { method: 'POST', body: JSON.stringify(body) }),
+  reextract: (folder: string, use_jev: boolean, use_llm: boolean) =>
+    request<ReextractResponse>(`/sessions/${encodeURIComponent(folder)}/reextract`, {
+      method: 'POST',
+      body: JSON.stringify({ use_jev, use_llm }),
+    }),
   writeRow: (folder: string, values: Row, force_columns: string[]) =>
     request<{ report: WriteReport; row: Row | null }>(`/sessions/${encodeURIComponent(folder)}/row`, {
       method: 'PUT',

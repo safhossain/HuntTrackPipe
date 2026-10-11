@@ -10,6 +10,7 @@ The manifest is ``session.files``; this module keeps disk and manifest in sync.
 """
 from __future__ import annotations
 
+import logging
 import re
 import shutil
 from datetime import date
@@ -21,6 +22,8 @@ from ..sessions.models import CombinedFile, FinalFile, InputFile, Session, utc_n
 from ..sessions.store import POSTING_FILE, SESSION_FILE
 from . import convert as cv
 from .combine import merge_pdfs
+
+log = logging.getLogger("htp.files")
 
 CONVERTED_DIR = ".converted"
 THUMBS_DIR = ".thumbs"
@@ -121,6 +124,7 @@ class FileManager:
             pages=cv.page_count(p),
         )
         session.files.inputs.append(item)
+        log.info("%s: input %d %s (%d bytes, %s pages)", session.folder, idx, name, item.size, item.pages)
         return item
 
     def set_doc_type(self, session: Session, index: int, doc_type: str | None) -> None:
@@ -207,6 +211,7 @@ class FileManager:
         shutil.copy2(src, folder / name)
         final = FinalFile(file=name, doc_type=item.doc_type, from_index=index)
         session.files.finals.append(final)
+        log.info("%s: final %s from input %d", session.folder, name, index)
         return final
 
     # -- combine -------------------------------------------------------------------
@@ -224,6 +229,7 @@ class FileManager:
         out = merge_pdfs(pdfs, folder / name)
         combined = CombinedFile(file=name, from_indices=list(indices), pages=cv.page_count(out), at=utc_now())
         session.files.combined = combined
+        log.info("%s: combined %s from %s (%s pages)", session.folder, name, indices, combined.pages)
         return combined
 
     # -- outputs -------------------------------------------------------------------

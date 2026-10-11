@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { api, type FilesView, type QAView, type Row, type RowValue, type SessionDetail } from '../api/client'
+import { api, type DiffEntry, type FilesView, type QAView, type ReextractResponse, type Row, type RowValue, type SessionDetail } from '../api/client'
 import FieldInput from '../components/FieldInput.vue'
 import FilesPanel from '../components/FilesPanel.vue'
 import JevPanel from '../components/JevPanel.vue'
@@ -86,6 +86,56 @@ function setField(c: string, v: RowValue) {
   form[c] = v
 }
 
+// ---- re-extract ----
+const reextracting = ref(false)
+const reUseJev = ref(true)
+const reUseLlm = ref(true)
+const reResult = ref<ReextractResponse | null>(null)
+const reSelected = reactive<Record<string, boolean>>({})
+const reChanged = computed(() => reResult.value?.diff.filter((d) => d.changed) ?? [])
+const reChosen = computed(() => reChanged.value.filter((d) => reSelected[d.column]))
+
+async function reextract() {
+  reextracting.value = true
+  reResult.value = null
+  try {
+    const r = await api.reextract(props.folder, reUseJev.value, reUseLlm.value)
+    reResult.value = r
+    for (const k of Object.keys(reSelected)) delete reSelected[k]
+    for (const d of r.diff) if (d.changed) reSelected[d.column] = true
+    if (detail.value) {
+      if (r.extraction.jev) detail.value.session.jev = r.extraction.jev
+      if (r.extraction.llm) detail.value.session.llm = r.extraction.llm
+    }
+    for (const w of r.extraction.warnings) app.toast(w, 'info', 8000)
+    if (!reChanged.value.length) app.toast('Re-extraction matches the tracker row; nothing to apply.', 'success')
+  } catch (e) {
+    app.toast(errorText(e), 'error', 10000)
+  } finally {
+    reextracting.value = false
+  }
+}
+
+async function applyReextract() {
+  if (!reChosen.value.length) return
+  saving.value = true
+  try {
+    const values: Row = {}
+    for (const d of reChosen.value) values[d.column] = d.proposed
+    const { report } = await api.writeRow(props.folder, values, Object.keys(values))
+    app.toast(`Applied ${Object.keys(report.written).length} column(s) to row ${report.row}`, 'success')
+    reResult.value = null
+    await load()
+  } catch (e) {
+    app.toast(errorText(e), 'error', 10000)
+    await load()
+  } finally {
+    saving.value = false
+  }
+}
+
+const cell = (v: DiffEntry['current']) => (v === null || v === undefined || v === '' ? '—' : String(v))
+
 async function copyPath() {
   try {
     await navigator.clipboard.writeText(folderPath.value)
@@ -153,6 +203,39 @@ const pretty = (o: unknown) => JSON.stringify(o, null, 2)
         <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <FieldInput v-for="c in columns" :key="c" :column="c" :model-value="form[c] ?? null" :hint="dirty.includes(c) ? '• edited' : undefined" @update:model-value="(v) => setField(c, v)" />
         </div>
+      </div>
+
+      <div class="card space-y-3">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <h3 class="font-semibold">Re-extract <span class="text-xs font-normal text-slate-500">(runs Jev/LLM on the stored posting; nothing is written until you apply)</span></h3>
+          <div class="flex items-center gap-3 text-sm">
+            <label class="flex items-center gap-1"><input v-model="reUseJev" type="checkbox" /> Jev</label>
+            <label class="flex items-center gap-1"><input v-model="reUseLlm" type="checkbox" /> LLM</label>
+            <button class="btn-secondary" :disabled="reextracting || saving" @click="reextract">{{ reextracting ? 'Extracting…' : 'Re-extract' }}</button>
+          </div>
+        </div>
+        <template v-if="reResult">
+          <p v-if="!reChanged.length" class="text-sm text-slate-500">No differences against the tracker row.</p>
+          <template v-else>
+            <table class="w-full text-sm">
+              <thead class="text-left text-xs uppercase text-slate-500">
+                <tr><th class="w-8 py-1"></th><th class="py-1">Column</th><th class="py-1">Tracker</th><th class="py-1">Proposed</th></tr>
+              </thead>
+              <tbody>
+                <tr v-for="d in reChanged" :key="d.column" class="border-t border-slate-100">
+                  <td class="py-1"><input v-model="reSelected[d.column]" type="checkbox" /></td>
+                  <td class="py-1 font-mono text-xs">{{ d.column }}</td>
+                  <td class="py-1 text-slate-500">{{ cell(d.current) }}</td>
+                  <td class="py-1" :class="reSelected[d.column] ? 'font-medium text-emerald-700' : ''">{{ cell(d.proposed) }}</td>
+                </tr>
+              </tbody>
+            </table>
+            <div class="flex items-center justify-end gap-3">
+              <span class="text-xs text-slate-500">Selected columns overwrite the tracker cell.</span>
+              <button class="btn-primary" :disabled="saving || !reChosen.length" @click="applyReextract">Apply {{ reChosen.length ? `(${reChosen.length})` : '' }}</button>
+            </div>
+          </template>
+        </template>
       </div>
 
       <div class="card">

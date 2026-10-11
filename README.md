@@ -1,7 +1,7 @@
 # HuntTrackPipe
 
 # 🚧 UNDER CONSTRUCTION 🚧
-# STATUS: Step 4 of 5 done (core pipeline + CLI + webapp + files + Q&A)
+# STATUS: All 5 steps done (core pipeline + CLI + webapp + files + Q&A + hardening)
 
 ## Issue to solve
 Logging every job application by hand (copying fields into a spreadsheet, making folders, renaming and merging documents, answering portal questions) is slow and error-prone.
@@ -63,6 +63,12 @@ Other flags:
 | `--no-llm` | skip the LLM; only Jev's direct values (Work_Mode, Employment_Type) are used |
 | `--json` | machine-readable output |
 | `--confirmation` | Confirmation_# |
+| `--allow-duplicate` | create even if the posting matches an existing application (otherwise exit code 5) |
+
+### Tests
+> python -m pytest
+
+Runs offline against a synthetic tracker under a temp dir; Jev and Claude are faked. Never touches `JobHunting/`.
 
 ### Webapp
 With the venv active, from the repo root:
@@ -72,17 +78,21 @@ Starts the FastAPI backend on **http://127.0.0.1:8010** and the Vue UI on **http
 
 Screens:
 - **Dashboard** (`/`): every managed session with its row read back from Excel (status, outcome, applied date, days since, deadline), plus a list of unmanaged folders.
-- **New application** (`/new`): paste the posting, run Jev + Claude (either can be toggled off), review Jev's answers and the extracted fields, fill the manual fields (Applied_Date, Posting_URL, status, outcome, Applied_Through, Confirmation_#), then create the folder + row.
-- **Session** (`/sessions/{folder}`): Overview tab edits the tracker row (edited fields overwrite Excel, untouched fields never do); if Excel has the workbook open the write is kept as a pending write and a Retry button flushes it later. Files and Questions tabs (below). Log tab shows raw Jev/LLM output.
+- **New application** (`/new`): paste the posting, run Jev + Claude (either can be toggled off), review Jev's answers and the extracted fields, fill the manual fields (Applied_Date, Posting_URL, status, outcome, Applied_Through, Confirmation_#), then create the folder + row. If the posting text or requisition ID matches an existing application a **Possible duplicate** banner links to it and Create asks for confirmation.
+- **Session** (`/sessions/{folder}`): Overview tab edits the tracker row (edited fields overwrite Excel, untouched fields never do); if Excel has the workbook open the write is kept as a pending write and a Retry button flushes it later. **Re-extract** runs Jev/Claude again on the stored posting and shows only the columns that differ from the tracker; tick the ones you want and Apply. Files and Questions tabs (below). Log tab shows raw Jev/LLM output of the latest run.
 - **Files tab**: drop files in (saved as `{count}_<name>.<ext>`), thumbnails, drag or ▲/▼ to reorder (renumbers on disk), pick a document type per file (guessed from the name), convert a file in place (PDF ⇄ DOCX, PDF → PNG/JPG, anything → PDF; the result is added as a new input), **Make final** → `{Candidate_Name}_{DocType}_{X}.<ext>`, **Combine → PDF** → `{Candidate_Name}_{X}.pdf` (non-PDF inputs are converted first, merged in display order). Files you drop into the folder by hand show up as *untracked* and can be adopted. Jev's upload-mode hint highlights the relevant button; you can override it.
 - **Questions tab**: paste application questions (one or several, each with an optional character/word limit), **Answer pending** answers them all in one Claude Haiku call written in first person from your candidate context + the posting; limits are checked in code and over-long answers are re-asked once. Edit answers by hand, **Regenerate…** one with feedback, Copy, reorder. `answers.md` in the application folder is kept up to date.
 - **Convert** (`/convert`): standalone converter, nothing is stored. PDF → PNG/JPG gives one image per page (zipped).
+- **Settings** (`/settings`): edit `htp.config.json` (paths, candidate name, Jev thresholds, models, DPI, backups) without restarting; shows whether the API keys, tracker and candidate context are present, and a live tail of the log.
+
+Logs go to `JobHunting/Applications/.htp_logs/htp.log` (rotating, 2 MB x 5): every Jev/Claude call with token counts and timing, every tracker write with the columns written/skipped, lock and duplicate refusals, file operations. Posting text, candidate context and answers are never logged.
 
 ## What it creates
 ```
 JobHunting/Applications/
   job_application_tracker.xlsx
   .htp_backup/                                     # last 10 tracker copies, one per write
+  .htp_logs/htp.log                                # rotating log
   R-204817_Shopify_Junior-Software-Engineer_2026-10-11/
     session.json                                   # engine state (Jev/LLM output, file manifest, Q&A)
     posting.txt
@@ -99,4 +109,4 @@ Folder name: `{Requisition_ID}_{Organization}_{Position_Title}_{Date_Created}`. 
 2. ✅ Webapp: dashboard, new-application flow, session overview (incl. Excel-locked pending write + retry)
 3. ✅ Files: conversions, combine to PDF, thumbnails, reorder UI, standalone converter
 4. ✅ Application questions (Q&A)
-5. Hardening: committed tests, re-extract diff, duplicate detection, logs
+5. ✅ Hardening: committed tests, re-extract diff, duplicate detection, logs, Settings page

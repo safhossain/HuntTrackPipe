@@ -5,6 +5,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from ..duplicates import DuplicateHit
 from ..sessions.models import QA, Files, JevDerived, JevRecord, LLMRecord, Limit, Session, UploadMode
 
 
@@ -20,6 +21,36 @@ class ExtractResponse(BaseModel):
     derived: JevDerived = Field(default_factory=JevDerived)
     values: dict[str, Any] = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)
+    duplicates: list[DuplicateHit] = Field(default_factory=list)
+
+
+class ReextractRequest(BaseModel):
+    use_jev: bool = True
+    use_llm: bool = True
+
+
+class DiffEntry(BaseModel):
+    column: str
+    current: Any = None
+    proposed: Any = None
+    changed: bool
+
+
+class ReextractResponse(BaseModel):
+    extraction: ExtractResponse
+    row: dict[str, Any] | None = None
+    diff: list[DiffEntry]
+
+
+class SettingsUpdate(BaseModel):
+    """Partial ``htp.config.json`` update; nested dicts are merged key by key."""
+
+    config: dict[str, Any]
+
+
+class LogsResponse(BaseModel):
+    path: str
+    lines: list[str]
 
 
 class WriteReportModel(BaseModel):
@@ -34,6 +65,7 @@ class CreateSessionRequest(BaseModel):
     posting_url: str | None = None
     extraction: ExtractResponse
     manual: dict[str, Any] = Field(default_factory=dict)
+    allow_duplicate: bool = False
 
 
 class SessionDetail(BaseModel):

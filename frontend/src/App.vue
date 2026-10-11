@@ -17,6 +17,7 @@ onMounted(() => app.bootstrap())
           <RouterLink to="/" class="hover:text-indigo-600" active-class="text-indigo-600 font-medium" exact-active-class="text-indigo-600 font-medium">Dashboard</RouterLink>
           <RouterLink to="/new" class="hover:text-indigo-600" active-class="text-indigo-600 font-medium">New application</RouterLink>
           <RouterLink to="/convert" class="hover:text-indigo-600" active-class="text-indigo-600 font-medium">Convert</RouterLink>
+          <RouterLink to="/settings" class="hover:text-indigo-600" active-class="text-indigo-600 font-medium">Settings</RouterLink>
         </nav>
         <div class="ml-auto flex items-center gap-3 whitespace-nowrap text-xs text-slate-500">
           <template v-if="app.settings">

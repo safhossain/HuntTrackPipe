@@ -7,6 +7,7 @@ re-asked once with an explicit "shorten to N" instruction.
 """
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -16,6 +17,8 @@ from ..config import Settings
 from ..llm.client import ClaudeClient, LLMResult
 from ..llm.prompts import QA_SYSTEM
 from ..sessions.models import Limit, Question, Session, utc_now
+
+log = logging.getLogger("htp.qa")
 
 ANSWERS_FILE = "answers.md"
 _DASHES = str.maketrans({"\u2014": "-", "\u2013": "-", "\u2012": "-", "\u2015": "-"})
@@ -224,6 +227,10 @@ def answer_questions(
 
     _add_usage(session.qa.usage, run.usage)
     session.qa.last_answered_at = now
+    log.info(
+        "%s: answered %d/%d question(s) reask=%d usage=%s warnings=%d",
+        session.folder, len(run.answered), len(targets), len(offenders), run.usage, len(run.warnings),
+    )
     return run
 
 

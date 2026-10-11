@@ -14,3 +14,5 @@ pypdf
 img2pdf
 pdf2docx
 pillow
+# Tests: python -m pytest
+pytest
