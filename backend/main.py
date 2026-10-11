@@ -6,11 +6,12 @@ import traceback
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from .api.routers import extract, files, sessions, settings
+from .api.routers import extract, files, qa, sessions, settings
 from .excel.tracker import TrackerError, TrackerLocked
 from .files.convert import ConversionError
 from .jev.client import JevError
 from .llm.client import LLMError
+from .qa.answer import CandidateContextMissing
 
 app = FastAPI(title="HuntTrackPipe API", version="0.1.0")
 
@@ -18,6 +19,7 @@ API = "/api"
 app.include_router(extract.router, prefix=API)
 app.include_router(sessions.router, prefix=API)
 app.include_router(files.router, prefix=API)
+app.include_router(qa.router, prefix=API)
 app.include_router(settings.router, prefix=API)
 
 
@@ -55,6 +57,11 @@ async def _llm(_: Request, exc: LLMError):
 @app.exception_handler(FileExistsError)
 async def _exists(_: Request, exc: FileExistsError):
     return _err(409, exc)
+
+
+@app.exception_handler(CandidateContextMissing)
+async def _no_context(_: Request, exc: CandidateContextMissing):
+    return _err(412, exc)  # precondition: the user must write candidate_context.txt first
 
 
 @app.exception_handler(FileNotFoundError)

@@ -5,7 +5,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from ..sessions.models import Files, JevDerived, JevRecord, LLMRecord, Session, UploadMode
+from ..sessions.models import QA, Files, JevDerived, JevRecord, LLMRecord, Limit, Session, UploadMode
 
 
 class ExtractRequest(BaseModel):
@@ -105,6 +105,44 @@ class NameRequest(BaseModel):
 
 class UploadModeRequest(BaseModel):
     upload_mode: UploadMode
+
+
+class QAView(BaseModel):
+    qa: QA
+    candidate_context_exists: bool
+    candidate_context_path: str
+    answers_md: str | None = None  # file name when it exists
+    organization: str | None = None
+    title: str | None = None
+    warnings: list[str] = Field(default_factory=list)
+
+
+class QuestionCreate(BaseModel):
+    text: str
+    limit: Limit | None = None
+
+
+class QuestionsCreate(BaseModel):
+    questions: list[QuestionCreate]
+
+
+class QuestionUpdate(BaseModel):
+    text: str | None = None
+    limit: Limit | None = None
+    clear_limit: bool = False
+    answer: str | None = None  # manual answer edit
+
+
+class AnswerRequest(BaseModel):
+    ids: list[str] | None = None  # default: every pending question
+
+
+class RegenerateRequest(BaseModel):
+    feedback: str | None = None
+
+
+class QuestionOrderRequest(BaseModel):
+    order: list[str]
 
 
 class SettingsResponse(BaseModel):

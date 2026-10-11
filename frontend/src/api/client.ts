@@ -184,6 +184,40 @@ export interface FilesView {
   tools: { soffice: string | null; pdf2docx: boolean; targets: string[] }
 }
 
+export interface Limit {
+  unit: 'chars' | 'words'
+  value: number
+}
+
+export interface Question {
+  id: string
+  text: string
+  limit: Limit | null
+  status: 'pending' | 'answered'
+  answer: string | null
+  feedback: string | null
+  answered_at: string | null
+  model: string | null
+  note: string | null
+  created_at: string
+}
+
+export interface QA {
+  questions: Question[]
+  usage: Record<string, number>
+  last_answered_at: string | null
+}
+
+export interface QAView {
+  qa: QA
+  candidate_context_exists: boolean
+  candidate_context_path: string
+  answers_md: string | null
+  organization: string | null
+  title: string | null
+  warnings: string[]
+}
+
 export interface Session {
   schema_version: number
   session_id: string
@@ -196,7 +230,7 @@ export interface Session {
   upload_mode: string
   upload_mode_source: string
   files: Files
-  qa: { questions: unknown[] }
+  qa: QA
 }
 
 export interface SessionSummary {
@@ -266,6 +300,21 @@ export const api = {
   downloadUrl: (folder: string, name: string, inline = false) =>
     `/api${filesPath(folder)}/download/${encodeURIComponent(name)}${inline ? '?inline=true' : ''}`,
 
+  // ---- Q&A ----
+  qa: (folder: string) => request<QAView>(qaPath(folder)),
+  addQuestions: (folder: string, questions: { text: string; limit: Limit | null }[]) =>
+    request<QAView>(`${qaPath(folder)}/questions`, { method: 'POST', body: JSON.stringify({ questions }) }),
+  updateQuestion: (folder: string, qid: string, body: { text?: string; limit?: Limit | null; clear_limit?: boolean; answer?: string }) =>
+    request<QAView>(`${qaPath(folder)}/questions/${encodeURIComponent(qid)}`, { method: 'PUT', body: JSON.stringify(body) }),
+  reorderQuestions: (folder: string, order: string[]) =>
+    request<QAView>(`${qaPath(folder)}/questions/order`, { method: 'PUT', body: JSON.stringify({ order }) }),
+  deleteQuestion: (folder: string, qid: string) =>
+    request<QAView>(`${qaPath(folder)}/questions/${encodeURIComponent(qid)}`, { method: 'DELETE' }),
+  answerQuestions: (folder: string, ids: string[] | null) =>
+    request<QAView>(`${qaPath(folder)}/answer`, { method: 'POST', body: JSON.stringify({ ids }) }),
+  regenerate: (folder: string, qid: string, feedback: string | null) =>
+    request<QAView>(`${qaPath(folder)}/regenerate/${encodeURIComponent(qid)}`, { method: 'POST', body: JSON.stringify({ feedback }) }),
+
   // ---- standalone converter ----
   tools: () => request<{ soffice: string | null; pdf2docx: boolean; targets: string[] }>('/files/tools'),
   convertFile: async (file: File, target: string) => {
@@ -278,4 +327,8 @@ export const api = {
 
 function filesPath(folder: string) {
   return `/sessions/${encodeURIComponent(folder)}/files`
+}
+
+function qaPath(folder: string) {
+  return `/sessions/${encodeURIComponent(folder)}/qa`
 }

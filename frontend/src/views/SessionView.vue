@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { api, type FilesView, type Row, type RowValue, type SessionDetail } from '../api/client'
+import { api, type FilesView, type QAView, type Row, type RowValue, type SessionDetail } from '../api/client'
 import FieldInput from '../components/FieldInput.vue'
 import FilesPanel from '../components/FilesPanel.vue'
 import JevPanel from '../components/JevPanel.vue'
+import QaPanel from '../components/QaPanel.vue'
 import { useAppStore } from '../stores/app'
 import { errorText, fmtDate } from '../utils'
 
@@ -101,6 +102,21 @@ function onFilesChanged(v: FilesView) {
   detail.value.session.upload_mode_source = v.upload_mode_source
 }
 
+function onQaChanged(v: QAView) {
+  if (detail.value) detail.value.session.qa = v.qa
+}
+
+const tabLabel = (t: string) => {
+  if (!detail.value) return t
+  if (t === 'files') return `files (${detail.value.session.files.inputs.length})`
+  if (t === 'questions') {
+    const qs = detail.value.session.qa.questions
+    const pending = qs.filter((q) => q.status === 'pending').length
+    return `questions (${qs.length}${pending ? `, ${pending} pending` : ''})`
+  }
+  return t
+}
+
 const pretty = (o: unknown) => JSON.stringify(o, null, 2)
 </script>
 
@@ -125,7 +141,7 @@ const pretty = (o: unknown) => JSON.stringify(o, null, 2)
     <div v-else-if="!detail.row" class="rounded-md bg-amber-50 p-3 text-sm text-amber-900">No row in the tracker for this folder yet. Saving will create one.</div>
 
     <nav class="flex gap-1 border-b border-slate-200 text-sm">
-      <button v-for="t in (['overview', 'files', 'questions', 'log'] as const)" :key="t" class="-mb-px border-b-2 px-3 py-2 capitalize" :class="tab === t ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-slate-500 hover:text-slate-800'" @click="tab = t">{{ t }}</button>
+      <button v-for="t in (['overview', 'files', 'questions', 'log'] as const)" :key="t" class="-mb-px border-b-2 px-3 py-2 capitalize" :class="tab === t ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-slate-500 hover:text-slate-800'" @click="tab = t">{{ tabLabel(t) }}</button>
     </nav>
 
     <section v-if="tab === 'overview'" class="space-y-4">
@@ -149,7 +165,9 @@ const pretty = (o: unknown) => JSON.stringify(o, null, 2)
       <FilesPanel :folder="folder" @changed="onFilesChanged" />
     </section>
 
-    <section v-else-if="tab === 'questions'" class="card text-sm text-slate-500">Application questions arrive in step 4.</section>
+    <section v-else-if="tab === 'questions'">
+      <QaPanel :folder="folder" @changed="onQaChanged" />
+    </section>
 
     <section v-else class="grid gap-4 lg:grid-cols-2">
       <JevPanel v-if="detail.session.jev" :jev="detail.session.jev" :derived="detail.session.jev.derived" :warnings="detail.session.jev.derived.warnings" />

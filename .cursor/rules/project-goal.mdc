@@ -26,11 +26,12 @@ backend/
   run.py           CLI: python -m backend.run
   columns.py       tracker column registry + dropdown options + /api/meta payload
   main.py          FastAPI app (:8010), exception -> HTTP status mapping
-  api/             models.py, deps.py, routers/ (extract, sessions, files, settings)
+  api/             models.py, deps.py, routers/ (extract, sessions, files, qa, settings)
   jev/             questions.py (question set + Excel mappings), client.py, derive.py
   llm/             schema_builder.py, prompts.py, client.py, postprocess.py
   excel/tracker.py openpyxl writer
   files/           convert.py (soffice, pdf2docx, PyMuPDF, img2pdf), combine.py (pypdf), manager.py (FileManager: manifest <-> disk)
+  qa/answer.py     answer_questions() (one structured call, limit check + re-ask), answers.md rendering
   sessions/        models.py (session.json), store.py
 frontend/          Vue 3 + Vite + Pinia + Tailwind v4 (:5180); views Dashboard, NewApplication, Session, Convert
 docs/DESIGN.md     design spec

@@ -225,9 +225,9 @@ Upload mode (from Jev, user can override; override is remembered as `upload_mode
 
 Inputs per call: `candidate_context.txt` (read fresh every time; path in config), `posting.txt`, organization + title, previously answered questions (read-only, for consistency), pending questions each with optional `{unit: chars|words, value}` limit.
 
-One Claude call (`qa_model`, default `claude-haiku-5-5`, configurable) with structured output `{ answers: [{ id, answer }] }`. System prompt: write in first person as the candidate; use only facts in the context; respect each limit; no em/en dashes; plain text. Engine verifies limits in code and re-asks once for the offending answers.
+One Claude call (`qa_model`, default `claude-haiku-5-5`, configurable) with structured output `{ answers: [{ id, answer }] }` (`id` constrained to the pending ids via enum). System prompt (`QA_SYSTEM`): write in first person as the candidate; use only facts in the context and posting, never invent, no placeholders; aim for 70-95 % of each limit; no em/en dashes, no markdown. Engine (`backend/qa/answer.py`): strips quotes and converts dashes in code, verifies limits (`chars` = `len`, `words` = whitespace split) and re-asks once for the offenders with the previous answer and an explicit "at most N" instruction; if still over, keeps the shorter answer and sets `question.note`. Usage accumulates in `qa.usage`.
 
-Operations: add / edit / delete question (any time, before or after extraction), Answer pending, Regenerate one (with optional feedback text), Copy answer. `answers.md` is regenerated after every change. Token guard as in section 7.
+Operations: add one or several questions (one per line) with optional limit; edit text/limit (editing an answered question keeps the answer and adds a note); type or edit an answer by hand (`model = "manual"`); reorder; delete; Answer pending (all in one call) or Answer one; Regenerate one with optional feedback (previous answer + feedback go into the prompt; previously answered questions are included read-only for consistency); Copy. `answers.md` is regenerated after every change and is downloadable through the files endpoint. Missing or empty `candidate_context.txt` -> HTTP 412 with the expected path; the UI shows a banner with the path and disables the Answer buttons. Token guard as in section 7.
 
 ## 12. UI screens
 
@@ -270,10 +270,12 @@ Operations: add / edit / delete question (any time, before or after extraction),
 | `POST .../files/adopt` `{name}` · `PUT .../files/upload-mode` `{upload_mode}` | adopt an untracked file / override upload mode |
 | `GET .../files/thumb/{name}?width=` · `GET .../files/download/{name}?inline=` | first-page PNG / file download or inline open |
 | `GET /files/tools` · `POST /files/convert` (multipart `file` + `target`) | tool availability / standalone converter: returns the file, or a zip when a PDF yields several images |
-| `POST/PUT/DELETE /sessions/{id}/qa/questions` ; `POST /sessions/{id}/qa/answer` ; `POST .../regenerate/{qid}` | Q&A |
+| `GET /sessions/{folder}/qa` | `QAView`: questions, usage, context-file presence + path, `answers.md` presence, org/title |
+| `POST .../qa/questions` `{questions:[{text, limit?}]}` · `PUT .../qa/questions/order` `{order}` · `PUT .../qa/questions/{qid}` `{text?, limit?, clear_limit?, answer?}` · `DELETE .../qa/questions/{qid}` | manage questions; `answer` = manual answer |
+| `POST .../qa/answer` `{ids?}` · `POST .../qa/regenerate/{qid}` `{feedback?}` | answer pending (or given ids) in one call / redo one with feedback |
 | `GET/PUT /settings` | config |
 
-LLM/Jev failures return HTTP 502 with the provider message (as in Resumate); Excel lock returns 423; conversion failures and invalid file operations 400; missing files 404; uploads over 50 MB 413.
+LLM/Jev failures return HTTP 502 with the provider message (as in Resumate); Excel lock returns 423; conversion failures and invalid file operations 400; missing files 404; uploads over 50 MB 413; missing candidate context 412.
 
 ## 15. Edge cases
 
@@ -290,5 +292,5 @@ LLM/Jev failures return HTTP 502 with the provider message (as in Resumate); Exc
 1. ✅ **Core, no UI**: config, naming, session store, Jev client + questions, schema builder, Claude client, Excel writer; a small CLI (`python -m backend.run --posting file.txt`) to validate end to end.
 2. ✅ **Webapp**: Dashboard, New application, Session Overview (tracker-row editor, pending-write banner + retry, posting text, Jev/LLM log). Files and Questions tabs are placeholders.
 3. ✅ **Files**: conversions, combine, thumbnails, reorder UI, standalone `/convert` page.
-4. **Q&A**.
+4. ✅ **Q&A**.
 5. **Hardening**: backups, lock flow, re-extract diff, duplicate detection, logs.

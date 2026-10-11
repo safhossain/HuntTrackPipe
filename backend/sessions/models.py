@@ -99,13 +99,17 @@ class Question(BaseModel):
     limit: Limit | None = None
     status: Literal["pending", "answered"] = "pending"
     answer: str | None = None
-    feedback: str | None = None
+    feedback: str | None = None  # last revision feedback given to the model
     answered_at: str | None = None
-    model: str | None = None
+    model: str | None = None  # model id, or "manual" when the user typed/edited the answer
+    note: str | None = None  # engine remark, e.g. "still 12 chars over the limit after re-ask"
+    created_at: str = Field(default_factory=utc_now)
 
 
 class QA(BaseModel):
     questions: list[Question] = Field(default_factory=list)
+    usage: dict[str, int] = Field(default_factory=dict)  # cumulative input/output tokens
+    last_answered_at: str | None = None
 
 
 class Session(BaseModel):

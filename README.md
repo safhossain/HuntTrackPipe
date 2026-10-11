@@ -1,7 +1,7 @@
 # HuntTrackPipe
 
 # 🚧 UNDER CONSTRUCTION 🚧
-# STATUS: Step 3 of 5 done (core pipeline + CLI + webapp + files)
+# STATUS: Step 4 of 5 done (core pipeline + CLI + webapp + files + Q&A)
 
 ## Issue to solve
 Logging every job application by hand (copying fields into a spreadsheet, making folders, renaming and merging documents, answering portal questions) is slow and error-prone.
@@ -12,7 +12,7 @@ A local pipeline that takes a pasted job posting and:
 2. Builds a JSON schema from Jev's answers and has **Claude Haiku 5.5** extract only those fields.
 3. Creates a per-application folder and writes one row to `job_application_tracker.xlsx` (the only source of truth; no database).
 4. Renames, converts and combines application files into one PDF.
-5. *(planned)* Answers application text-field questions from your own candidate context file.
+5. Answers application text-field questions from your own candidate context file.
 
 Complementary to [Resumate](../resumate) but deliberately decoupled: the two share files, not code.
 
@@ -40,6 +40,8 @@ For the webapp (Node 20+):
 ### Configure
 Edit `htp.config.json` (non-secret settings: paths, candidate name, Jev thresholds, model IDs).
 Set `HTP_CONFIG=<path>` to use a different config file, e.g. to point at a scratch copy of the tracker.
+
+For the Questions tab, write `JobHunting/candidate_context.txt` (git-ignored): a plain-text dump of your background, education, jobs and projects with concrete results, skills and tools, and what you are looking for. Answers are written only from facts in this file plus the posting, so the more specific it is the better. It is read fresh on every call; edit it any time.
 
 The tracker must contain a table named `Applications` with these headers (order does not matter):
 `Requisition_ID, Organization, Position_Title, Compensation, Work_Mode, Employment_Type, Deadline, Applied_Date, Posting_URL, Application_Status, Recruiter_Name, Recruiter_Contact, Outcome, Role_Categories, Position_Level, Days_Since_Applied, Applied_Through, Confirmation_#, Folder`
@@ -71,8 +73,9 @@ Starts the FastAPI backend on **http://127.0.0.1:8010** and the Vue UI on **http
 Screens:
 - **Dashboard** (`/`): every managed session with its row read back from Excel (status, outcome, applied date, days since, deadline), plus a list of unmanaged folders.
 - **New application** (`/new`): paste the posting, run Jev + Claude (either can be toggled off), review Jev's answers and the extracted fields, fill the manual fields (Applied_Date, Posting_URL, status, outcome, Applied_Through, Confirmation_#), then create the folder + row.
-- **Session** (`/sessions/{folder}`): Overview tab edits the tracker row (edited fields overwrite Excel, untouched fields never do); if Excel has the workbook open the write is kept as a pending write and a Retry button flushes it later. Files tab (below). Log tab shows raw Jev/LLM output. Questions tab arrives in step 4.
+- **Session** (`/sessions/{folder}`): Overview tab edits the tracker row (edited fields overwrite Excel, untouched fields never do); if Excel has the workbook open the write is kept as a pending write and a Retry button flushes it later. Files and Questions tabs (below). Log tab shows raw Jev/LLM output.
 - **Files tab**: drop files in (saved as `{count}_<name>.<ext>`), thumbnails, drag or ▲/▼ to reorder (renumbers on disk), pick a document type per file (guessed from the name), convert a file in place (PDF ⇄ DOCX, PDF → PNG/JPG, anything → PDF; the result is added as a new input), **Make final** → `{Candidate_Name}_{DocType}_{X}.<ext>`, **Combine → PDF** → `{Candidate_Name}_{X}.pdf` (non-PDF inputs are converted first, merged in display order). Files you drop into the folder by hand show up as *untracked* and can be adopted. Jev's upload-mode hint highlights the relevant button; you can override it.
+- **Questions tab**: paste application questions (one or several, each with an optional character/word limit), **Answer pending** answers them all in one Claude Haiku call written in first person from your candidate context + the posting; limits are checked in code and over-long answers are re-asked once. Edit answers by hand, **Regenerate…** one with feedback, Copy, reorder. `answers.md` in the application folder is kept up to date.
 - **Convert** (`/convert`): standalone converter, nothing is stored. PDF → PNG/JPG gives one image per page (zipped).
 
 ## What it creates
@@ -86,6 +89,7 @@ JobHunting/Applications/
     0_resume.pdf  1_cover-letter.docx              # inputs, in display order
     Safwan-Hossain_Resume_R-204817.pdf             # final (renamed copy)
     Safwan-Hossain_R-204817.pdf                    # combined PDF
+    answers.md                                     # application questions + answers
     .converted/  .thumbs/                          # caches (safe to delete)
 ```
 Folder name: `{Requisition_ID}_{Organization}_{Position_Title}_{Date_Created}`. Missing parts become `null`; collisions get `_2`, `_3`, ...
@@ -94,5 +98,5 @@ Folder name: `{Requisition_ID}_{Organization}_{Position_Title}_{Date_Created}`. 
 1. ✅ Core: config, naming, Jev, schema builder, Claude, Excel writer, CLI
 2. ✅ Webapp: dashboard, new-application flow, session overview (incl. Excel-locked pending write + retry)
 3. ✅ Files: conversions, combine to PDF, thumbnails, reorder UI, standalone converter
-4. Application questions (Q&A)
+4. ✅ Application questions (Q&A)
 5. Hardening: committed tests, re-extract diff, duplicate detection, logs
