@@ -76,6 +76,15 @@ def test_schema_is_strict_and_ordered():
 def test_schema_without_jev_asks_everything():
     d = derived_without_jev()
     assert list(build_schema(d)["properties"]) == list(FIELD_TO_COLUMN)
+    assert d.upload_mode == "separate_uploads"
+
+
+def test_unstated_upload_mode_defaults_to_separate_uploads():
+    assert derive(answers(upload_mode=choice("not_stated", 0.95)), JevSettings()).upload_mode == "separate_uploads"
+    missing = answers()
+    del missing["upload_mode"]
+    assert derive(missing, JevSettings()).upload_mode == "separate_uploads"
+    assert derive(answers(upload_mode=choice("single_document", 0.9)), JevSettings()).upload_mode == "single_document"
 
 
 def test_schema_with_nothing_selected_raises():

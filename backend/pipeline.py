@@ -41,6 +41,7 @@ def derived_without_jev() -> JevDerived:
     return JevDerived(
         schema_fields=list(EXISTENCE.values()),
         low_confidence_choices=[fld for _, fld, _ in CHOICE_COLUMNS.values()],
+        upload_mode="separate_uploads",
         warnings=["Jev skipped: all fields sent to the LLM."],
     )
 
@@ -132,13 +133,16 @@ def create_application(
     )
 
     row = {**vals, **manual}
+    upload_mode = extraction.derived.upload_mode
+    if upload_mode == "not_stated":
+        upload_mode = "separate_uploads"
     session = Session(
         folder=name,
         posting=Posting(text=posting_text, url=posting_url, hash=posting_hash(posting_text)),
         jev=extraction.jev,
         llm=extraction.llm,
         review=Review(values=row),
-        upload_mode=extraction.derived.upload_mode,
+        upload_mode=upload_mode,
     )
     store.create(session)
     log.info("created %s (jev=%s llm=%s)", name, bool(extraction.jev), bool(extraction.llm))

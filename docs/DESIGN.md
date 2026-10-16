@@ -154,7 +154,7 @@ Choices (direct-to-Excel candidates):
 
 - `work_mode`: `in_person`, `hybrid`, `remote`, `travel`, `tbd`, `unknown`. `tbd` = posting says it is to be determined / discussed; `unknown` = not mentioned.
 - `employment_type`: `full_time`, `part_time`, `contract`, `contract_full_time`, `contract_part_time`, `internship`, `co_op`, `temporary`, `freelance`, `unknown`.
-- `upload_mode`: `single_document` (resume only), `separate_uploads` (several documents, separate fields), `single_combined_file` (several documents merged into one file), `not_stated`.
+- `upload_mode`: `single_document` (resume only), `separate_uploads` (several documents, separate fields), `single_combined_file` (several documents merged into one file), `not_stated`. When Jev returns `not_stated` or no usable answer, the session's upload mode is `separate_uploads`.
 
 Document nouls (pre-fill the Files tab): `requires_cover_letter`, `requires_transcript`, `requires_portfolio`, `requires_references`.
 

@@ -44,6 +44,25 @@ export function extOf(name: string): string {
   return i >= 0 ? name.slice(i + 1).toLowerCase() : ''
 }
 
+/** Trim a pasted posting: drop leading tabs, collapse blank gaps, join wrapped lines, keep paragraph breaks. */
+export function cleanPostingText(raw: string): string {
+  const lines = raw
+    .replace(/\u00a0/g, ' ')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .split('\n')
+    .map((line) => line.replace(/^\t+/, '').trim())
+  const collapsed = lines.join('\n').replace(/\n{3,}/g, '\n\n').trim()
+  // A single line break is a wrap; a blank line is a paragraph.
+  const unwrapped = collapsed.replace(/([^\n])\n(?!\n)/g, '$1 ')
+  return unwrapped
+    .split('\n')
+    .map((line) => line.replace(/[^\S\n]+/g, ' ').trim())
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
 export const UPLOAD_MODE_LABELS: Record<string, string> = {
   single_document: 'Single document',
   separate_uploads: 'Separate uploads',

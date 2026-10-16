@@ -6,7 +6,7 @@ import FilesPanel from '../components/FilesPanel.vue'
 import JevPanel from '../components/JevPanel.vue'
 import QaPanel from '../components/QaPanel.vue'
 import { useAppStore } from '../stores/app'
-import { errorText, fmtDate } from '../utils'
+import { cleanPostingText, errorText, fmtDate } from '../utils'
 
 const props = defineProps<{ folder: string }>()
 const app = useAppStore()
@@ -16,6 +16,7 @@ const loading = ref(false)
 const saving = ref(false)
 const tab = ref<'overview' | 'files' | 'questions' | 'log'>('overview')
 const showPosting = ref(false)
+const cleanedPosting = computed(() => cleanPostingText(detail.value?.session.posting.text ?? ''))
 
 const form = reactive<Row>({})
 const original = reactive<Row>({})
@@ -136,6 +137,15 @@ async function applyReextract() {
 
 const cell = (v: DiffEntry['current']) => (v === null || v === undefined || v === '' ? '—' : String(v))
 
+async function copyPosting() {
+  try {
+    await navigator.clipboard.writeText(cleanedPosting.value)
+    app.toast('Posting text copied.', 'success', 2000)
+  } catch {
+    app.toast('Could not copy the posting text.', 'error')
+  }
+}
+
 async function copyPath() {
   try {
     await navigator.clipboard.writeText(folderPath.value)
@@ -238,9 +248,12 @@ const pretty = (o: unknown) => JSON.stringify(o, null, 2)
         </template>
       </div>
 
-      <div class="card">
-        <button class="text-sm font-semibold" @click="showPosting = !showPosting">{{ showPosting ? '▾' : '▸' }} Posting text<span v-if="detail.session.posting.url" class="ml-2 text-xs font-normal text-slate-500">{{ detail.session.posting.url }}</span></button>
-        <pre v-if="showPosting" class="mt-3 max-h-96 overflow-auto whitespace-pre-wrap rounded bg-slate-50 p-3 text-xs">{{ detail.session.posting.text }}</pre>
+      <div class="card space-y-2">
+        <div class="flex items-center justify-between gap-2">
+          <button class="text-sm font-semibold" @click="showPosting = !showPosting">{{ showPosting ? '▾' : '▸' }} Posting text<span v-if="detail.session.posting.url" class="ml-2 text-xs font-normal text-slate-500">{{ detail.session.posting.url }}</span></button>
+          <button type="button" class="btn-secondary" @click="copyPosting">Copy all</button>
+        </div>
+        <pre v-if="showPosting" class="max-h-96 overflow-auto whitespace-pre-wrap rounded bg-slate-50 p-3 text-xs">{{ cleanedPosting }}</pre>
       </div>
     </section>
 

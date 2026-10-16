@@ -3,7 +3,7 @@ description: Current implementation state of HuntTrackPipe, what's done, what's 
 alwaysApply: true
 ---
 
-# HuntTrackPipe - Current State (2026-10-11)
+# HuntTrackPipe - Current State (2026-10-16)
 
 ## Done: all 5 steps
 - **Step 1 (core + CLI)**: config, naming, session store, Jev client/questions/derive, schema builder, Claude client, post-processing, Excel writer (`backend/excel/tracker.py`), `backend/pipeline.py` (`extract()`, `create_application(..., allow_duplicate=)`), CLI `python -m backend.run` (`--allow-duplicate`, exit 5 on duplicate). Column lists / dropdown options / `META` live in `backend/columns.py`.
@@ -15,7 +15,11 @@ alwaysApply: true
   - `backend/duplicates.py`: `posting_hash()` (whitespace-collapsed, lower-cased sha256[:16]), `find_duplicates(cfg, text, values)` -> `[DuplicateHit(folder, reason)]` by posting hash and Requisition_ID (+Organization); `DuplicateError` -> 409 `{detail, type:"DuplicateError", duplicates}`. `Posting.hash` stored on create. `POST /extract` returns `duplicates`; `POST /sessions` takes `allow_duplicate`. UI: banner in `NewApplicationView` + `confirm()`; `ApiError.isDuplicate/duplicates`.
   - Re-extract: `POST /sessions/{f}/reextract {use_jev, use_llm}` -> `{extraction, row, diff}` (`row_diff()` in `routers/sessions.py` over `EXTRACTED_COLUMNS`, dates normalised to ISO); replaces `session.jev/llm`, writes nothing. UI card in `SessionView` overview: checkbox table of changed columns -> `writeRow(values, force_columns)`.
   - Settings: `PUT /api/settings {config}` deep-merges into the current config, validates with `Settings`, writes `CONFIG_PATH` (paths as posix), `settings.cache_clear()`, re-points logging; 400 with field names on validation error. `GET /settings` paths now include `config_path`, `log_path`. `SettingsView.vue` at `/settings` (form, status dots, log tail).
-  - Tests: `tests/` (51 tests, ~4 s): `conftest.py` sets `HTP_CONFIG` before importing `backend`, builds a synthetic tracker (`make_tracker`), `env` + `session` fixtures, `sample_extraction()`. Files: `test_naming`, `test_jev_schema`, `test_tracker`, `test_pipeline` (create + duplicates + lock), `test_files` (PyMuPDF only), `test_qa` (fake client), `test_api` (TestClient; monkeypatches `extract` in `routers.extract` / `routers.sessions` and `ClaudeClient` in `routers.qa`). `pytest.ini` at root. Run `python -m pytest`.
+  - Tests: `tests/` (53 tests): `conftest.py` sets `HTP_CONFIG` before importing `backend`, builds a synthetic tracker (`make_tracker`), `env` + `session` fixtures, `sample_extraction()`. Files: `test_naming`, `test_jev_schema`, `test_tracker`, `test_pipeline` (create + duplicates + lock + unstated upload mode), `test_files` (PyMuPDF only), `test_qa` (fake client), `test_api` (TestClient; monkeypatches `extract` in `routers.extract` / `routers.sessions` and `ClaudeClient` in `routers.qa`). `pytest.ini` at root. Run `python -m pytest`.
+- **After step 5 (agreed):**
+  - Dashboard bottom: `frontend/src/components/DashboardMetrics.vue`. Six client-side metrics from `GET /api/sessions` (total, outcome pie, work-mode pie, status bars, applied-through bars, created-by-month bars). No chart library.
+  - Upload mode default `separate_uploads` when Jev does not state one. Existing sessions already stored as `not_stated` are left alone.
+  - Posting boxes on New application (after a run) and Session show `cleanPostingText` plus Copy all. Create still sends the raw paste.
 - Errors: TrackerLocked 423, DuplicateError 409, TrackerError/ValueError/ConversionError 400, FileNotFoundError 404, CandidateContextMissing 412, upload > 50 MB 413, Jev/LLM 502, FileExistsError 409.
 - `review.pending_write` is `{values, force_columns}`; set only on 423, flushed by `/row/retry`.
 - Verified in the Cursor browser against a temp tracker copy: Settings save (config file rewritten, logged), re-extract (LLM-only) showing a single differing column and Apply overwriting the cell, duplicate banner on New application, 409 via API. `vue-tsc --noEmit` passes.

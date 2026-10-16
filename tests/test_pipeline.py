@@ -29,6 +29,13 @@ def test_create_application_writes_folder_session_and_row(env, session):
     assert session.review.values["Organization"] == "Acme Corp"
 
 
+def test_not_stated_upload_mode_is_stored_as_separate_uploads(env):
+    ex = sample_extraction()
+    ex.derived.upload_mode = "not_stated"
+    s, _ = create_application(env, posting_text="different posting", posting_url=None, extraction=ex)
+    assert s.upload_mode == "separate_uploads"
+
+
 def test_folder_collision_gets_suffix(env, session):
     s2, rep = create_application(
         env, posting_text=POSTING + "\nv2", posting_url=None, extraction=sample_extraction(),

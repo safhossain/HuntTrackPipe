@@ -5,7 +5,7 @@ import { ApiError, api, type DuplicateHit, type ExtractResponse, type Row, type 
 import FieldInput from '../components/FieldInput.vue'
 import JevPanel from '../components/JevPanel.vue'
 import { useAppStore } from '../stores/app'
-import { errorText } from '../utils'
+import { cleanPostingText, errorText } from '../utils'
 
 const app = useAppStore()
 const router = useRouter()
@@ -24,6 +24,16 @@ const manual = reactive<Row>({ Application_Status: 'Not Applied', Outcome: 'Pend
 
 const extractedCols = computed(() => app.meta?.extracted_columns ?? [])
 const manualCols = computed(() => app.meta?.manual_columns ?? [])
+const cleanedPosting = computed(() => cleanPostingText(posting.value))
+
+async function copyPosting() {
+  try {
+    await navigator.clipboard.writeText(cleanedPosting.value)
+    app.toast('Posting text copied.', 'success', 2000)
+  } catch {
+    app.toast('Could not copy the posting text.', 'error')
+  }
+}
 
 function setRow(target: Row, col: string, v: RowValue) {
   target[col] = v
@@ -149,6 +159,14 @@ const hintFor = (col: string) => {
           <button class="btn-primary" :disabled="creating" @click="create()">{{ creating ? 'Creating…' : 'Create application' }}</button>
         </div>
       </div>
+    </div>
+
+    <div v-if="result" class="card space-y-2">
+      <div class="flex items-center justify-between gap-2">
+        <h3 class="text-sm font-semibold">Posting text <span class="text-xs font-normal text-slate-500">trimmed; wrapped lines joined, paragraph breaks kept</span></h3>
+        <button type="button" class="btn-secondary" @click="copyPosting">Copy all</button>
+      </div>
+      <pre class="max-h-96 overflow-auto whitespace-pre-wrap rounded bg-slate-50 p-3 text-xs">{{ cleanedPosting }}</pre>
     </div>
   </div>
 </template>

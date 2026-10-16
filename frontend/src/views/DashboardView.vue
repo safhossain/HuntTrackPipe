@@ -2,6 +2,7 @@
 import { onMounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import { api, type SessionListResponse } from '../api/client'
+import DashboardMetrics from '../components/DashboardMetrics.vue'
 import { useAppStore } from '../stores/app'
 import { daysSince, errorText, fmtDate } from '../utils'
 
@@ -94,5 +95,7 @@ const outcomeCls: Record<string, string> = {
     <div v-if="data?.unmanaged.length" class="text-xs text-slate-500">
       Folders without a session.json (unmanaged): <span class="font-mono">{{ data.unmanaged.join(', ') }}</span>
     </div>
+
+    <DashboardMetrics v-if="data" :sessions="data.sessions" />
   </div>
 </template>

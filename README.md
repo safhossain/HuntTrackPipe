@@ -20,22 +20,58 @@ Full design: [`docs/DESIGN.md`](docs/DESIGN.md).
 
 ## How to Run
 
+From the repo root. `npm run dev` and `npm run api` use the shared venv’s Python, so you do not need to activate it for the web app. Activate it for the CLI and tests:
+
+> & "C:\Users\saf\Documents\coding\Python\Virtual_Environments\resumate_env\Scripts\Activate.ps1"
+
+Install once:
+
+> python -m pip install -r requirements.txt
+> npm install
+> npm --prefix frontend install
+
+Start the API and the UI together:
+
+> npm run dev
+
+UI:  http://localhost:5180
+API: http://127.0.0.1:8010
+
+Open the UI. The page at `:5180` proxies `/api` to `:8010`, so the browser only talks to 5180. If 5180 is already taken, Vite exits (`strictPort`) instead of switching ports. Resumate uses `:8000` and `:5173`, so both apps can run at the same time.
+
+Start them in two terminals instead:
+
+> npm run api
+
+> npm run ui
+
+`npm run api` is uvicorn on **8010**. `npm run ui` is Vite on **5180**. Health check: http://127.0.0.1:8010/api/health
+
+CLI (no server; venv active, repo root):
+
+> python -m backend.run --posting posting.txt --dry-run
+> python -m backend.run --posting posting.txt --url https://... --applied-date 2026-10-11 --status Applied --applied-through LinkedIn -y
+
+| Flag | Effect |
+|---|---|
+| `--posting -` | read the posting from stdin |
+| `--no-jev` | skip Jev; the LLM extracts every field |
+| `--no-llm` | skip the LLM; only Jev's direct values (Work_Mode, Employment_Type) are used |
+| `--json` | machine-readable output |
+| `--confirmation` | Confirmation_# |
+| `--allow-duplicate` | create even if the posting matches an existing application (otherwise exit code 5) |
+| `-y` / `--yes` | skip the confirmation prompt |
+
+Tests (venv active, repo root; never touches `JobHunting/`):
+
+> python -m pytest
+> cd frontend; npx vue-tsc --noEmit
+
 ### Prereqs
 - Python 3.11+ (developed on 3.14 in the shared `resumate_env` venv)
-- LibreOffice (for Office -> PDF; auto-detected in `C:\Program Files\LibreOffice`, or set `files.soffice_path` in `htp.config.json`)
-- API keys in `.env` at the repo root:
-  ```
-  TYPESAFE_API_KEY=...
-  ANTHROPIC_API_KEY=...
-  ```
-  Get the Jev key from `console.typesafe.ai` only; third-party "Jev" resellers exist.
-
-### Install
-Activate the venv, then from the repo root:
-> python -m pip install -r requirements.txt
-
-For the webapp (Node 20+):
-> npm install && npm --prefix frontend install
+- Node 20+
+- LibreOffice (for Office → PDF; auto-detected in `C:\Program Files\LibreOffice`, or set `files.soffice_path` in `htp.config.json`)
+- API keys in `.env` at the repo root: `TYPESAFE_API_KEY` and `ANTHROPIC_API_KEY`. Get the Jev key from `console.typesafe.ai` only; third-party "Jev" resellers exist.
 
 ### Configure
 Edit `htp.config.json` (non-secret settings: paths, candidate name, Jev thresholds, model IDs).
@@ -48,35 +84,7 @@ The tracker must contain a table named `Applications` with these headers (order 
 
 **Close the workbook in Excel before running.** The engine refuses to write while Excel holds the file.
 
-### CLI
-Extract only (no folder, no Excel write):
-> python -m backend.run --posting posting.txt --dry-run
-
-Create folder + row (asks for confirmation; `-y` skips it):
-> python -m backend.run --posting posting.txt --url https://... --applied-date 2026-10-11 --status Applied --applied-through LinkedIn
-
-Other flags:
-| Flag | Effect |
-|---|---|
-| `--posting -` | read the posting from stdin |
-| `--no-jev` | skip Jev; the LLM extracts every field |
-| `--no-llm` | skip the LLM; only Jev's direct values (Work_Mode, Employment_Type) are used |
-| `--json` | machine-readable output |
-| `--confirmation` | Confirmation_# |
-| `--allow-duplicate` | create even if the posting matches an existing application (otherwise exit code 5) |
-
-### Tests
-> python -m pytest
-
-Runs offline against a synthetic tracker under a temp dir; Jev and Claude are faked. Never touches `JobHunting/`.
-
-### Webapp
-With the venv active, from the repo root:
-> npm run dev
-
-Starts the FastAPI backend on **http://127.0.0.1:8010** and the Vue UI on **http://localhost:5180** (`strictPort`; `/api` is proxied). Both ports differ from Resumate (`:8000` / `:5173`) so the two can run together. `npm run api` / `npm run ui` start them separately.
-
-Screens:
+### Screens
 - **Dashboard** (`/`): every managed session with its row read back from Excel (status, outcome, applied date, days since, deadline), plus a list of unmanaged folders.
 - **New application** (`/new`): paste the posting, run Jev + Claude (either can be toggled off), review Jev's answers and the extracted fields, fill the manual fields (Applied_Date, Posting_URL, status, outcome, Applied_Through, Confirmation_#), then create the folder + row. If the posting text or requisition ID matches an existing application a **Possible duplicate** banner links to it and Create asks for confirmation.
 - **Session** (`/sessions/{folder}`): Overview tab edits the tracker row (edited fields overwrite Excel, untouched fields never do); if Excel has the workbook open the write is kept as a pending write and a Retry button flushes it later. **Re-extract** runs Jev/Claude again on the stored posting and shows only the columns that differ from the tracker; tick the ones you want and Apply. Files and Questions tabs (below). Log tab shows raw Jev/LLM output of the latest run.

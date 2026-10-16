@@ -52,9 +52,10 @@ def derive(answers: dict[str, Any], cfg: JevSettings) -> JevDerived:
         else:
             d.low_confidence_choices.append(fld)
 
-    # Upload hints
+    # Upload hints. "not_stated" (or no usable answer) becomes separate uploads,
+    # which is the working default for the Files tab.
     mode, conf = _choice(answers, "upload_mode")
-    d.upload_mode = mode if mode in UPLOAD_MODES else "not_stated"
+    d.upload_mode = mode if mode in UPLOAD_MODES and mode != "not_stated" else "separate_uploads"
     d.upload_mode_confidence = conf
     for key, doc in DOC_NOULS.items():
         p = _noul(answers, key)

@@ -37,7 +37,7 @@ OPTIONS: dict[str, list[str]] = {
     "Employment_Type": list(EMPLOYMENT_TYPE_VALUES.values()),
     "Application_Status": ["Not Applied", "Applied", "Recruiter-Screening", "Technical Interview", "Final Round"],
     "Outcome": ["Pending", "Withdrawn", "Rejected", "Offer", "Accepted"],
-    "Applied_Through": ["Org-Portal", "Indeed", "LinkedIn", "Email", "Workday"],
+    "Applied_Through": ["Org-Portal", "Indeed", "LinkedIn", "Email", "Workday", "Greenhouse", "Other"],
 }
 
 META = {
