@@ -162,7 +162,7 @@ Gate noul: `is_job_posting`.
 
 Thresholds (config, defaults): `noul_include_threshold = 0.35` (a field with noul >= 0.35 goes into the LLM schema; bias toward inclusion since an extra field just returns `null`), `choice_direct_confidence = 0.7` (choice written straight to Excel at or above this; below it the column is added to the LLM schema as an enum), document nouls >= 0.5 pre-tick a document type.
 
-Not sent to Jev or the LLM (manual): `Applied_Date`, `Posting_URL`, `Application_Status`, `Outcome`, `Applied_Through`, `Confirmation_#`, `Days_Since_Applied` (formula), `Folder` (engine).
+Not sent to Jev or the LLM (manual): `Applied_Date`, `Posting_URL`, `Application_Status`, `Outcome`, `Applied_Through`, `Confirmation_#`, `Found_From` (`HiringCafe`, `LinkedIn`, `Indeed`, `GCJobs`, `CRA`, `Other`), `Days_Since_Applied` (formula), `Folder` (engine).
 
 ## 7. LLM extraction (Claude Haiku 5.5)
 
@@ -237,8 +237,8 @@ Operations: add one or several questions (one per line) with optional limit; edi
 
 ## 12. UI screens
 
-1. **Dashboard** - list of application folders with status/outcome read from Excel; "New application".
-2. **New application** - paste posting + URL -> Run -> three panels: Jev results (chips with probability/confidence), extracted fields (editable form), manual fields (Applied_Date, Posting_URL, Application_Status, Applied_Through, Confirmation_#). A "Possible duplicate" banner lists matching sessions (section 15); "Create" makes the folder and writes the row, asking for confirmation when a duplicate was flagged.
+1. **Dashboard** - list of application folders with status/outcome read from Excel; "New application". Deadline is not a column here. Row color follows Outcome when it is terminal (Withdrawn grey, Rejected red, Offer and Accepted light green). While Outcome is Pending or blank, Application_Status sets the color (Not Applied yellow, Applied the default white, Recruiter-Screening light blue, Technical Interview orange, Final Round light purple).
+2. **New application** - paste posting + URL -> Run -> three panels: Jev results (chips with probability/confidence), extracted fields (editable form), manual fields (Applied_Date, Posting_URL, Application_Status, Outcome, Applied_Through, Found_From, Confirmation_#). A "Possible duplicate" banner lists matching sessions (section 15); "Create" makes the folder and writes the row, asking for confirmation when a duplicate was flagged.
 3. **Session** - tabs: Overview (Excel read-back, edit manual fields, write; **Re-extract** card runs Jev/LLM again on the stored posting and shows a per-column diff against the row with checkboxes; "Apply" writes the chosen columns with `force_columns`), Files (section 10), Questions (section 11), Log (raw Jev/LLM payloads of the latest run, usage).
 4. **Convert** - standalone converter (section 10); nothing is stored.
 5. **Settings** - edits `htp.config.json` through `PUT /settings` (partial, deep-merged, validated; `settings()` cache cleared); shows key presence (never the keys), tracker / candidate-context presence, resolved paths, and a tail of the log file.

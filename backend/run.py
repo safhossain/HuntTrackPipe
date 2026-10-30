@@ -2,7 +2,7 @@
 
 Examples
   python -m backend.run --posting posting.txt
-  python -m backend.run --posting posting.txt --url https://... --applied-date 2026-10-11 --applied-through LinkedIn
+  python -m backend.run --posting posting.txt --url https://... --applied-date 2026-10-11 --applied-through LinkedIn --found-from HiringCafe
   python -m backend.run --posting posting.txt --dry-run          # extract only, print, no files/Excel
   python -m backend.run --posting posting.txt --no-jev            # LLM extracts everything
   python -m backend.run --posting posting.txt --no-llm --dry-run  # see Jev decisions only
@@ -25,6 +25,7 @@ from .pipeline import create_application, extract
 
 STATUSES = tuple(OPTIONS["Application_Status"])
 APPLIED_THROUGH = tuple(OPTIONS["Applied_Through"])
+FOUND_FROM = tuple(OPTIONS["Found_From"])
 
 
 def _read_posting(arg: str) -> str:
@@ -48,6 +49,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--applied-date", type=date.fromisoformat, help="Applied_Date as YYYY-MM-DD")
     p.add_argument("--status", choices=STATUSES, help="Application_Status (default: Not Applied)")
     p.add_argument("--applied-through", choices=APPLIED_THROUGH, help="Applied_Through")
+    p.add_argument("--found-from", choices=FOUND_FROM, help="Found_From")
     p.add_argument("--confirmation", help="Confirmation_#")
     p.add_argument("--no-jev", action="store_true", help="skip Jev; LLM extracts every field")
     p.add_argument("--no-llm", action="store_true", help="skip the LLM; only Jev direct values are used")
@@ -108,6 +110,7 @@ def main(argv: list[str] | None = None) -> int:
         "Posting_URL": a.url,
         "Application_Status": a.status,
         "Applied_Through": a.applied_through,
+        "Found_From": a.found_from,
         "Confirmation_#": a.confirmation,
     }
     if not a.yes:

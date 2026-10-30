@@ -11,7 +11,7 @@ Local, single-user job-application pipeline. Pasted posting -> Jev (TypeSafe) ty
 - **Excel is the only source of truth for tracker columns.** No database. Non-tracker state lives in `<application folder>/session.json`.
 - **Decoupled from Resumate** (`../resumate`): share files, never import its code. Same stack on purpose (FastAPI + Vue 3).
 - **Jev = pre-LLM filter.** Nouls gate which fields go into the LLM schema (include at >= 0.35). Work_Mode / Employment_Type choices are written directly at confidence >= 0.7, otherwise added to the schema as enums. Upload mode + required-doc nouls are hints for the Files tab.
-- **Manual columns, never sent to Jev or the LLM:** Applied_Date, Posting_URL, Application_Status, Outcome, Applied_Through, Confirmation_#. Days_Since_Applied is a formula; Folder is written by the engine.
+- **Manual columns, never sent to Jev or the LLM:** Applied_Date, Posting_URL, Application_Status, Outcome, Applied_Through, Confirmation_#, Found_From. Days_Since_Applied is a formula; Folder is written by the engine.
 - **Folder name** `{Requisition_ID}_{Organization}_{Position_Title}_{Date_Created}` (creation date, never renamed). `null` for missing parts; `_{unix_ts}` only when the first three are all null; `_2`, `_3` on collision.
 - **File names:** inputs `{count}_<name>.<ext>`; separate finals `{Candidate_Name}_{DocType}_{X}.<ext>`; combined `{Candidate_Name}_{X}.pdf` (combined output is PDF only).
 - **Q&A context** is one user-written `JobHunting/candidate_context.txt`, read fresh every call.

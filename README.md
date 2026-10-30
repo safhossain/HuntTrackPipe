@@ -50,7 +50,7 @@ Start them in two terminals instead:
 CLI (no server; venv active, repo root):
 
 > python -m backend.run --posting posting.txt --dry-run
-> python -m backend.run --posting posting.txt --url https://... --applied-date 2026-10-11 --status Applied --applied-through LinkedIn -y
+> python -m backend.run --posting posting.txt --url https://... --applied-date 2026-10-11 --status Applied --applied-through LinkedIn --found-from HiringCafe -y
 
 | Flag | Effect |
 |---|---|
@@ -59,6 +59,7 @@ CLI (no server; venv active, repo root):
 | `--no-llm` | skip the LLM; only Jev's direct values (Work_Mode, Employment_Type) are used |
 | `--json` | machine-readable output |
 | `--confirmation` | Confirmation_# |
+| `--found-from` | Found_From (`HiringCafe`, `LinkedIn`, `Indeed`, `GCJobs`, `CRA`, `Other`) |
 | `--allow-duplicate` | create even if the posting matches an existing application (otherwise exit code 5) |
 | `-y` / `--yes` | skip the confirmation prompt |
 
@@ -80,13 +81,13 @@ Set `HTP_CONFIG=<path>` to use a different config file, e.g. to point at a scrat
 For the Questions tab, write `JobHunting/candidate_context.txt` (git-ignored): a plain-text dump of your background, education, jobs and projects with concrete results, skills and tools, and what you are looking for. Answers are written only from facts in this file plus the posting, so the more specific it is the better. It is read fresh on every call; edit it any time.
 
 The tracker must contain a table named `Applications` with these headers (order does not matter):
-`Requisition_ID, Organization, Position_Title, Compensation, Work_Mode, Employment_Type, Deadline, Applied_Date, Posting_URL, Application_Status, Recruiter_Name, Recruiter_Contact, Outcome, Role_Categories, Position_Level, Days_Since_Applied, Applied_Through, Confirmation_#, Folder`
+`Requisition_ID, Organization, Position_Title, Compensation, Work_Mode, Employment_Type, Deadline, Applied_Date, Posting_URL, Application_Status, Recruiter_Name, Recruiter_Contact, Outcome, Role_Categories, Position_Level, Days_Since_Applied, Applied_Through, Confirmation_#, Folder, Found_From`
 
 **Close the workbook in Excel before running.** The engine refuses to write while Excel holds the file.
 
 ### Screens
 - **Dashboard** (`/`): every managed session with its row read back from Excel (status, outcome, applied date, days since, deadline), plus a list of unmanaged folders.
-- **New application** (`/new`): paste the posting, run Jev + Claude (either can be toggled off), review Jev's answers and the extracted fields, fill the manual fields (Applied_Date, Posting_URL, status, outcome, Applied_Through, Confirmation_#), then create the folder + row. If the posting text or requisition ID matches an existing application a **Possible duplicate** banner links to it and Create asks for confirmation.
+- **New application** (`/new`): paste the posting, run Jev + Claude (either can be toggled off), review Jev's answers and the extracted fields, fill the manual fields (Applied_Date, Posting_URL, status, outcome, Applied_Through, Found_From, Confirmation_#), then create the folder + row. If the posting text or requisition ID matches an existing application a **Possible duplicate** banner links to it and Create asks for confirmation.
 - **Session** (`/sessions/{folder}`): Overview tab edits the tracker row (edited fields overwrite Excel, untouched fields never do); if Excel has the workbook open the write is kept as a pending write and a Retry button flushes it later. **Re-extract** runs Jev/Claude again on the stored posting and shows only the columns that differ from the tracker; tick the ones you want and Apply. Files and Questions tabs (below). Log tab shows raw Jev/LLM output of the latest run.
 - **Files tab**: drop files in (saved as `{count}_<name>.<ext>`), thumbnails, drag or ▲/▼ to reorder (renumbers on disk), pick a document type per file (guessed from the name), convert a file in place (PDF ⇄ DOCX, PDF → PNG/JPG, anything → PDF; the result is added as a new input), **Make final** → `{Candidate_Name}_{DocType}_{X}.<ext>`, **Combine → PDF** → `{Candidate_Name}_{X}.pdf` (non-PDF inputs are converted first, merged in display order). Files you drop into the folder by hand show up as *untracked* and can be adopted. Jev's upload-mode hint highlights the relevant button; you can override it.
 - **Questions tab**: paste application questions (one or several, each with an optional character/word limit), **Answer pending** answers them all in one Claude Haiku call written in first person from your candidate context + the posting; limits are checked in code and over-long answers are re-asked once. Edit answers by hand, **Regenerate…** one with feedback, Copy, reorder. `answers.md` in the application folder is kept up to date.

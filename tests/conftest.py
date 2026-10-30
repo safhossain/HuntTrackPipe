@@ -34,7 +34,7 @@ HEADERS = [
     "Requisition_ID", "Organization", "Position_Title", "Compensation", "Work_Mode", "Employment_Type",
     "Deadline", "Applied_Date", "Posting_URL", "Application_Status", "Recruiter_Name", "Recruiter_Contact",
     "Outcome", "Role_Categories", "Position_Level", "Days_Since_Applied", "Applied_Through", "Confirmation_#",
-    "Folder",
+    "Folder", "Found_From",
 ]
 POSTING = """Senior Backend Engineer - Acme Corp
 Req ID: R-12345
@@ -46,14 +46,14 @@ Please upload a resume and a cover letter as separate files.
 
 
 def make_tracker(path: Path) -> Path:
-    """Minimal clone of the real tracker: 19 headers, table ``Applications`` over A1:S2,
+    """Minimal clone of the real tracker: 20 headers, table ``Applications`` over A1:T2,
     one empty seed row carrying the Days_Since_Applied formula."""
     wb = Workbook()
     ws = wb.active
     ws.title = "Sheet1"
     ws.append(HEADERS)
     ws.cell(2, HEADERS.index("Days_Since_Applied") + 1).value = FORMULA_COLS["Days_Since_Applied"]
-    table = Table(displayName="Applications", ref="A1:S2")
+    table = Table(displayName="Applications", ref="A1:T2")
     table.tableStyleInfo = TableStyleInfo(name="TableStyleMedium2", showRowStripes=True)
     ws.add_table(table)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -111,6 +111,6 @@ def session(env: Settings):
     """One created application (folder + session.json + Excel row 2)."""
     s, report = create_application(
         env, posting_text=POSTING, posting_url="https://jobs.example/r-12345", extraction=sample_extraction(),
-        manual={"Applied_Through": "LinkedIn"}, date_created=date(2026, 10, 11),
+        manual={"Applied_Through": "LinkedIn", "Found_From": "HiringCafe"}, date_created=date(2026, 10, 11),
     )
     return s

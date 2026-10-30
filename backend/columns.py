@@ -26,6 +26,7 @@ MANUAL_COLUMNS: tuple[str, ...] = (
     "Outcome",
     "Applied_Through",
     "Confirmation_#",
+    "Found_From",
 )
 
 ENGINE_COLUMNS: tuple[str, ...] = ("Days_Since_Applied", "Folder")
@@ -37,7 +38,8 @@ OPTIONS: dict[str, list[str]] = {
     "Employment_Type": list(EMPLOYMENT_TYPE_VALUES.values()),
     "Application_Status": ["Not Applied", "Applied", "Recruiter-Screening", "Technical Interview", "Final Round"],
     "Outcome": ["Pending", "Withdrawn", "Rejected", "Offer", "Accepted"],
-    "Applied_Through": ["Org-Portal", "Indeed", "LinkedIn", "Email", "Workday", "Greenhouse", "Other"],
+    "Applied_Through": ["Org-Portal", "Indeed", "LinkedIn", "Email", "Workday", "Greenhouse", "AshbyHQ", "UltiPro", "Other"],
+    "Found_From": ["HiringCafe", "LinkedIn", "Indeed", "GCJobs", "CRA", "Other"],
 }
 
 META = {

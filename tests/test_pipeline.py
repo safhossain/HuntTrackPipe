@@ -23,6 +23,7 @@ def test_create_application_writes_folder_session_and_row(env, session):
     assert row["Organization"] == "Acme Corp"
     assert row["Deadline"] == date(2026, 12, 1)
     assert row["Applied_Through"] == "LinkedIn"
+    assert row["Found_From"] == "HiringCafe"
     assert row["Posting_URL"] == "https://jobs.example/r-12345"
     assert row["Application_Status"] == "Not Applied"
     assert row["Folder"] == session.folder

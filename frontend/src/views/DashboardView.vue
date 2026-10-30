@@ -36,6 +36,22 @@ const outcomeCls: Record<string, string> = {
   Offer: 'bg-emerald-100 text-emerald-800',
   Accepted: 'bg-emerald-600 text-white',
 }
+
+/** Outcome wins when it is terminal. Pending (or blank) falls through to status. */
+function rowClass(row: { Application_Status?: unknown; Outcome?: unknown } | null | undefined): string {
+  const outcome = row?.Outcome == null ? '' : String(row.Outcome)
+  const status = row?.Application_Status == null ? '' : String(row.Application_Status)
+  if (outcome === 'Withdrawn') return 'bg-slate-200 hover:bg-slate-300'
+  if (outcome === 'Rejected') return 'bg-red-100 hover:bg-red-200'
+  if (outcome === 'Offer' || outcome === 'Accepted') return 'bg-emerald-100 hover:bg-emerald-200'
+  if (outcome === 'Pending' || outcome === '') {
+    if (status === 'Not Applied') return 'bg-yellow-100 hover:bg-yellow-200'
+    if (status === 'Recruiter-Screening') return 'bg-sky-100 hover:bg-sky-200'
+    if (status === 'Technical Interview') return 'bg-orange-100 hover:bg-orange-200'
+    if (status === 'Final Round') return 'bg-violet-100 hover:bg-violet-200'
+  }
+  return 'hover:bg-slate-50'
+}
 </script>
 
 <template>
@@ -62,15 +78,14 @@ const outcomeCls: Record<string, string> = {
             <th class="px-3 py-2">Outcome</th>
             <th class="px-3 py-2">Applied</th>
             <th class="px-3 py-2 text-right">Days</th>
-            <th class="px-3 py-2">Deadline</th>
             <th class="px-3 py-2">Folder</th>
           </tr>
         </thead>
         <tbody>
           <tr v-if="!data || !data.sessions.length">
-            <td colspan="8" class="px-3 py-6 text-center text-slate-500">{{ loading ? 'Loading…' : 'No applications yet.' }}</td>
+            <td colspan="7" class="px-3 py-6 text-center text-slate-500">{{ loading ? 'Loading…' : 'No applications yet.' }}</td>
           </tr>
-          <tr v-for="s in data?.sessions ?? []" :key="s.folder" class="border-t border-slate-100 hover:bg-slate-50">
+          <tr v-for="s in data?.sessions ?? []" :key="s.folder" class="border-t border-slate-200" :class="rowClass(s.row)">
             <td class="px-3 py-2 font-medium">{{ s.row?.Organization ?? '—' }}</td>
             <td class="px-3 py-2">{{ s.row?.Position_Title ?? '—' }}</td>
             <td class="px-3 py-2">
@@ -82,7 +97,6 @@ const outcomeCls: Record<string, string> = {
             </td>
             <td class="px-3 py-2 tabular-nums">{{ fmtDate(s.row?.Applied_Date) }}</td>
             <td class="px-3 py-2 text-right tabular-nums">{{ daysSince(s.row?.Applied_Date) ?? '' }}</td>
-            <td class="px-3 py-2 tabular-nums">{{ fmtDate(s.row?.Deadline) }}</td>
             <td class="px-3 py-2">
               <RouterLink :to="{ name: 'session', params: { folder: s.folder } }" class="font-mono text-xs text-indigo-600 hover:underline">{{ s.folder }}</RouterLink>
               <span v-if="s.pending_write" class="chip ml-1 bg-amber-100 text-amber-800" title="Excel write pending">pending</span>

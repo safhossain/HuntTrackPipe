@@ -32,7 +32,7 @@ def test_first_write_uses_seed_row_and_defaults(tracker: Tracker):
     assert row["Application_Status"] == "Not Applied" and row["Outcome"] == "Pending"
     assert str(row["Days_Since_Applied"]).startswith("=IF(")
     assert row["Position_Title"] is None
-    assert _table_ref(tracker.path) == "A1:S2"
+    assert _table_ref(tracker.path) == "A1:T2"
     assert "Position_Title" not in rep.written
 
 
@@ -40,7 +40,7 @@ def test_second_folder_appends_and_extends_table(tracker: Tracker):
     tracker.write_row("F1", {"Organization": "Acme"})
     rep = tracker.write_row("F2", {"Organization": "Beta"})
     assert rep.row == 3 and rep.created
-    assert _table_ref(tracker.path) == "A1:S3"
+    assert _table_ref(tracker.path) == "A1:T3"
     assert [r["Folder"] for r in tracker.read_all()] == ["F1", "F2"]
     assert str(tracker.read_row("F2")["Days_Since_Applied"]).startswith("=IF(")
 

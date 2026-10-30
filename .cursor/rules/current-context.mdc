@@ -20,6 +20,7 @@ alwaysApply: true
   - Dashboard bottom: `frontend/src/components/DashboardMetrics.vue`. Six client-side metrics from `GET /api/sessions` (total, outcome pie, work-mode pie, status bars, applied-through bars, created-by-month bars). No chart library.
   - Upload mode default `separate_uploads` when Jev does not state one. Existing sessions already stored as `not_stated` are left alone.
   - Posting boxes on New application (after a run) and Session show `cleanPostingText` plus Copy all. Create still sends the raw paste.
+  - Dashboard table has no Deadline column. Row color: Outcome wins when terminal (Withdrawn grey, Rejected red, Offer/Accepted light green). Pending or blank Outcome uses Application_Status (Not Applied yellow, Applied white, Recruiter-Screening light blue, Technical Interview orange, Final Round light purple).
 - Errors: TrackerLocked 423, DuplicateError 409, TrackerError/ValueError/ConversionError 400, FileNotFoundError 404, CandidateContextMissing 412, upload > 50 MB 413, Jev/LLM 502, FileExistsError 409.
 - `review.pending_write` is `{values, force_columns}`; set only on 423, flushed by `/row/retry`.
 - Verified in the Cursor browser against a temp tracker copy: Settings save (config file rewritten, logged), re-extract (LLM-only) showing a single differing column and Apply overwriting the cell, duplicate banner on New application, 409 via API. `vue-tsc --noEmit` passes.
@@ -28,7 +29,7 @@ alwaysApply: true
 - Dashboard filters/sorting; bulk status update; export of answers; Jev question tuning from real postings; CI for pytest + vue-tsc.
 
 ## Tracker state
-Table `Applications` = `A1:S2`, headers end with `Folder` (column S). Row 2 is the empty seed row with the Days_Since_Applied formula in P2. Dropdowns cover whole columns E, F, J, M, Q. User keeps it closed while the engine runs.
+Table `Applications` headers end with `Found_From` (column T); `Folder` is column S. Days_Since_Applied formula is column P. Dropdowns cover whole columns E, F, J, M, Q, T. `Found_From` choices: HiringCafe, LinkedIn, Indeed, GCJobs, CRA, Other. It is a manual create/edit field and is not a dashboard column. User keeps the workbook closed while the engine runs.
 
 ## Testing conventions
 - `python -m pytest` is the first check after any backend change; `cd frontend && npx vue-tsc --noEmit` after frontend changes.
