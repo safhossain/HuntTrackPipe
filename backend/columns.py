@@ -1,9 +1,19 @@
 """Tracker column registry: which columns the engine extracts, which are
-manual, and the dropdown options (mirrors the Excel data validations)."""
+manual, and the dropdown options (mirrors the Excel data validations).
+
+Shipped defaults live here. ``Application_Status``, ``Applied_Through`` and
+``Found_From`` can be overridden via ``htp.config.json`` ``options`` and grown
+from the UI; Excel list validations are synced from the resolved lists.
+"""
 from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
 
 from .jev.questions import EMPLOYMENT_TYPE_VALUES, WORK_MODE_VALUES
 from .naming import DOC_TYPES
+
+if TYPE_CHECKING:
+    from .config import Settings
 
 EXTRACTED_COLUMNS: tuple[str, ...] = (
     "Requisition_ID",
@@ -33,7 +43,14 @@ ENGINE_COLUMNS: tuple[str, ...] = ("Days_Since_Applied", "Folder")
 
 DATE_COLUMNS: tuple[str, ...] = ("Applied_Date", "Deadline")
 
-OPTIONS: dict[str, list[str]] = {
+# Columns the UI may grow; Work_Mode / Employment_Type / Outcome stay code-only.
+EDITABLE_OPTION_COLUMNS: tuple[str, ...] = (
+    "Application_Status",
+    "Applied_Through",
+    "Found_From",
+)
+
+DEFAULT_OPTIONS: dict[str, list[str]] = {
     "Work_Mode": list(WORK_MODE_VALUES.values()),
     "Employment_Type": list(EMPLOYMENT_TYPE_VALUES.values()),
     "Application_Status": ["Not Applied", "Applied", "Recruiter-Screening", "Technical Interview", "Final Round"],
@@ -42,12 +59,39 @@ OPTIONS: dict[str, list[str]] = {
     "Found_From": ["HiringCafe", "LinkedIn", "Indeed", "GCJobs", "CRA", "Other"],
 }
 
-META = {
-    "extracted_columns": list(EXTRACTED_COLUMNS),
-    "manual_columns": list(MANUAL_COLUMNS),
-    "engine_columns": list(ENGINE_COLUMNS),
-    "date_columns": list(DATE_COLUMNS),
-    "options": OPTIONS,
-    "doc_types": list(DOC_TYPES),
-    "upload_modes": ["single_document", "separate_uploads", "single_combined_file", "not_stated"],
-}
+# Back-compat alias for shipped defaults (prefer resolved_options()).
+OPTIONS = DEFAULT_OPTIONS
+
+
+def resolved_options(cfg_options: dict[str, list[str]] | None = None) -> dict[str, list[str]]:
+    """Shipped defaults, with editable columns overridden by config when present."""
+    out = {k: list(v) for k, v in DEFAULT_OPTIONS.items()}
+    if cfg_options:
+        for key in EDITABLE_OPTION_COLUMNS:
+            if key in cfg_options and cfg_options[key] is not None:
+                out[key] = list(cfg_options[key])
+    return out
+
+
+def editable_list_options(cfg: Settings) -> dict[str, list[str]]:
+    """Subset of resolved options that Excel list-validations should mirror."""
+    opts = resolved_options(cfg.options)
+    return {k: opts[k] for k in EDITABLE_OPTION_COLUMNS}
+
+
+def meta_payload(cfg: Settings | None = None) -> dict[str, Any]:
+    cfg_options = cfg.options if cfg is not None else None
+    return {
+        "extracted_columns": list(EXTRACTED_COLUMNS),
+        "manual_columns": list(MANUAL_COLUMNS),
+        "engine_columns": list(ENGINE_COLUMNS),
+        "date_columns": list(DATE_COLUMNS),
+        "options": resolved_options(cfg_options),
+        "editable_option_columns": list(EDITABLE_OPTION_COLUMNS),
+        "doc_types": list(DOC_TYPES),
+        "upload_modes": ["single_document", "separate_uploads", "single_combined_file", "not_stated"],
+    }
+
+
+# Static snapshot (defaults only). Prefer ``meta_payload(settings())`` in the API.
+META = meta_payload(None)

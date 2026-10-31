@@ -45,6 +45,8 @@ def test_health_meta_settings(client):
     assert client.get("/api/health").json()["ok"] is True
     meta = client.get("/api/meta").json()
     assert meta["extracted_columns"][0] == "Requisition_ID" and "upload_modes" in meta
+    assert set(meta["editable_option_columns"]) == {"Application_Status", "Applied_Through", "Found_From"}
+    assert "LinkedIn" in meta["options"]["Applied_Through"]
     s = client.get("/api/settings").json()
     assert s["config"]["candidate_name"] == "Test Candidate" and s["tracker_exists"] is True
     assert set(s["keys"]) == {"TYPESAFE_API_KEY", "ANTHROPIC_API_KEY"}
@@ -197,3 +199,80 @@ def test_settings_update_and_logs(client, env):
     logs = client.get("/api/logs?lines=50").json()
     assert logs["path"].endswith("htp.log")
     assert any("settings updated" in ln for ln in logs["lines"])
+
+
+def test_add_option_persists_and_syncs_excel(client, env):
+    from openpyxl import load_workbook
+
+    r = client.post("/api/meta/options/Applied_Through", json={"value": "Lever"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["value"] == "Lever" and body["excel_synced"] is True
+    assert "Lever" in body["options"]["Applied_Through"]
+    # First add seeds all three editable lists into config.
+    on_disk = json.loads(config_mod.CONFIG_PATH.read_text(encoding="utf-8"))
+    assert on_disk["options"]["Applied_Through"][-1] == "Lever"
+    assert "Application_Status" in on_disk["options"] and "Found_From" in on_disk["options"]
+    assert "Lever" in client.get("/api/meta").json()["options"]["Applied_Through"]
+
+    wb = load_workbook(env.tracker_abs)
+    formulas = [dv.formula1 for dv in wb.active.data_validations.dataValidation]
+    assert any("Lever" in (f or "") for f in formulas)
+
+    assert client.post("/api/meta/options/Applied_Through", json={"value": "Lever"}).status_code == 409
+    assert client.post("/api/meta/options/Outcome", json={"value": "Maybe"}).status_code == 400
+    assert client.post("/api/meta/options/Applied_Through", json={"value": "A,B"}).status_code == 400
+
+
+def test_add_option_defers_excel_when_locked(client, env):
+    owner = env.tracker_abs.with_name(f"~${env.tracker_abs.name}")
+    owner.write_text("")
+    try:
+        r = client.post("/api/meta/options/Found_From", json={"value": "Referral"})
+        assert r.status_code == 200, r.text
+        assert r.json()["excel_synced"] is False and r.json()["excel_error"]
+        assert "Referral" in r.json()["options"]["Found_From"]
+        assert "Referral" in json.loads(config_mod.CONFIG_PATH.read_text(encoding="utf-8"))["options"]["Found_From"]
+    finally:
+        owner.unlink(missing_ok=True)
+
+
+def test_tracker_status_lock_and_dropdown_sync(client, env):
+    from backend.columns import DEFAULT_OPTIONS
+    from backend.excel.tracker import Tracker
+
+    # Seed Excel DVs to match HTP defaults so unlocked status is in_sync.
+    Tracker(env.tracker_abs, backups_keep=2).sync_list_validations({
+        k: list(DEFAULT_OPTIONS[k]) for k in ("Application_Status", "Applied_Through", "Found_From")
+    })
+    r = client.get("/api/tracker/status?force=true")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["locked"] is False
+    assert body["dropdown_sync"]["status"] == "in_sync"
+    assert body["suggest_sync"] is False
+
+    # Drift: change Excel only.
+    Tracker(env.tracker_abs, backups_keep=2).sync_list_validations({"Applied_Through": ["OnlyExcel"]})
+    r = client.get("/api/tracker/status?force=true")
+    assert r.json()["dropdown_sync"]["status"] == "mismatched"
+    assert r.json()["suggest_sync"] is True
+    assert any(c["column"] == "Applied_Through" and c["changed"] for c in r.json()["dropdown_sync"]["columns"])
+
+    # Lock via ~$ owner file (probe path; watcher may also see it).
+    owner = env.tracker_abs.with_name(f"~${env.tracker_abs.name}")
+    owner.write_text("")
+    try:
+        r = client.get("/api/tracker/status")
+        assert r.json()["locked"] is True
+        assert r.json()["dropdown_sync"]["status"] == "locked"
+        assert r.json()["suggest_sync"] is False
+        assert client.post("/api/meta/options/sync").status_code == 423
+    finally:
+        owner.unlink(missing_ok=True)
+
+    r = client.post("/api/meta/options/sync")
+    assert r.status_code == 200, r.text
+    assert r.json()["locked"] is False
+    assert r.json()["dropdown_sync"]["status"] == "in_sync"
+    assert r.json()["suggest_sync"] is False

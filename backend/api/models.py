@@ -48,6 +48,44 @@ class SettingsUpdate(BaseModel):
     config: dict[str, Any]
 
 
+class AddOptionRequest(BaseModel):
+    value: str
+
+
+class AddOptionResponse(BaseModel):
+    column: str
+    value: str
+    options: dict[str, list[str]]
+    excel_synced: bool = True
+    excel_error: str | None = None
+
+
+class DropdownColumnDiffModel(BaseModel):
+    column: str
+    htp: list[str]
+    excel: list[str] | None = None
+    changed: bool
+
+
+class DropdownSyncStatusModel(BaseModel):
+    status: str  # in_sync | mismatched | locked | missing | error
+    columns: list[DropdownColumnDiffModel] = Field(default_factory=list)
+    checked_at: str | None = None
+    tracker_mtime: float | None = None
+    detail: str | None = None
+
+
+class TrackerStatusResponse(BaseModel):
+    locked: bool
+    lock_source: str | None = None
+    owner_file: str | None = None
+    tracker_path: str
+    changed_at: str | None = None
+    watching: bool = False
+    dropdown_sync: DropdownSyncStatusModel
+    suggest_sync: bool = False
+
+
 class LogsResponse(BaseModel):
     path: str
     lines: list[str]
@@ -183,3 +221,4 @@ class SettingsResponse(BaseModel):
     keys: dict[str, bool]
     tracker_exists: bool
     candidate_context_exists: bool
+    tracker_status: TrackerStatusResponse | None = None

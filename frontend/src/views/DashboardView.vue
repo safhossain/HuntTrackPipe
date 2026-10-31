@@ -59,7 +59,31 @@ function rowClass(row: { Application_Status?: unknown; Outcome?: unknown } | nul
     <div class="flex items-center justify-between">
       <h1 class="text-xl font-semibold">Applications</h1>
       <div class="flex gap-2">
-        <button class="btn-secondary" :disabled="loading" @click="load">Refresh</button>
+        <button
+          type="button"
+          class="btn-secondary px-2"
+          :disabled="loading"
+          title="Reload application list from Excel"
+          aria-label="Refresh application list"
+          @click="load"
+        >
+          <svg
+            class="h-4 w-4"
+            :class="loading ? 'animate-spin' : undefined"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M21 12a9 9 0 0 0-14.5-7.1L4 7" />
+            <path d="M4 3v4h4" />
+            <path d="M3 12a9 9 0 0 0 14.5 7.1L20 17" />
+            <path d="M20 21v-4h-4" />
+          </svg>
+        </button>
         <RouterLink to="/new" class="btn-primary">New application</RouterLink>
       </div>
     </div>

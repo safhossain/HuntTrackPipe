@@ -92,3 +92,70 @@ def test_missing_table(tmp_path: Path):
     Workbook().save(p)
     with pytest.raises(TrackerError):
         Tracker(p).headers()
+
+
+def test_sync_list_validations_by_header(tracker: Tracker):
+    touched = tracker.sync_list_validations({
+        "Applied_Through": ["Org-Portal", "Lever"],
+        "Found_From": ["HiringCafe", "Referral"],
+        "Missing_Col": ["Nope"],  # ignored
+    })
+    assert set(touched) == {"Applied_Through", "Found_From"}
+    wb = load_workbook(tracker.path)
+    dvs = {str(dv.sqref): dv.formula1 for dv in wb.active.data_validations.dataValidation}
+    assert any("Lever" in f for f in dvs.values())
+    assert any("Referral" in f for f in dvs.values())
+
+    # Reinforced on write_row in the same save.
+    tracker.write_row("F1", {"Organization": "Acme"}, list_options={"Application_Status": ["Not Applied", "Offer-Stage"]})
+    wb = load_workbook(tracker.path)
+    formulas = [dv.formula1 for dv in wb.active.data_validations.dataValidation]
+    assert any("Offer-Stage" in f for f in formulas)
+
+
+def test_list_validation_rejects_comma_and_overlong(tracker: Tracker):
+    with pytest.raises(TrackerError, match="commas"):
+        tracker.sync_list_validations({"Applied_Through": ["A,B"]})
+    with pytest.raises(TrackerError, match="too long"):
+        tracker.sync_list_validations({"Applied_Through": ["x" * 256]})
+
+
+def test_read_list_options_roundtrip(tracker: Tracker):
+    tracker.sync_list_validations({"Found_From": ["HiringCafe", "Referral"]})
+    got = tracker.read_list_options(["Found_From", "Applied_Through"])
+    assert got["Found_From"] == ["HiringCafe", "Referral"]
+    assert got["Applied_Through"] is None  # no DV on that column yet
+
+
+def test_parse_list_formula_strips_excel_spaces():
+    from backend.excel.tracker import parse_list_formula
+
+    # Excel UI often writes "a, b, c"; HTP writes "a,b,c". Both must compare equal.
+    spaced = parse_list_formula('"Not Applied, Applied, Recruiter-Screening"')
+    tight = parse_list_formula('"Not Applied,Applied,Recruiter-Screening"')
+    assert spaced == ["Not Applied", "Applied", "Recruiter-Screening"]
+    assert spaced == tight
+
+
+def test_dropdown_compare_and_cache(env):
+    from backend.columns import DEFAULT_OPTIONS, editable_list_options
+    from backend.excel.dropdown_sync import compare_dropdowns, dropdown_cache
+
+    dropdown_cache.clear()
+    opts = {k: list(DEFAULT_OPTIONS[k]) for k in ("Application_Status", "Applied_Through", "Found_From")}
+    Tracker(env.tracker_abs, backups_keep=2).sync_list_validations(opts)
+
+    a = compare_dropdowns(env, locked=False, force=True)
+    assert a.status == "in_sync"
+    b = compare_dropdowns(env, locked=False, force=False)
+    assert b.status == "in_sync" and b.checked_at == a.checked_at  # cache hit
+
+    locked = compare_dropdowns(env, locked=True)
+    assert locked.status == "locked"
+
+    Tracker(env.tracker_abs, backups_keep=2).sync_list_validations({"Found_From": ["X"]})
+    dropdown_cache.clear()
+    c = compare_dropdowns(env, locked=False, force=True)
+    assert c.status == "mismatched"
+    assert any(d.column == "Found_From" and d.changed for d in c.columns)
+    assert editable_list_options(env)["Found_From"] != ["X"]

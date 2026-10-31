@@ -155,8 +155,8 @@ const hintFor = (col: string) => {
         </div>
 
         <div class="flex items-center justify-end gap-3">
-          <span class="text-xs text-slate-500">Creates the folder, posting.txt, session.json and the tracker row. Close Excel first.</span>
-          <button class="btn-primary" :disabled="creating" @click="create()">{{ creating ? 'Creating…' : 'Create application' }}</button>
+          <span class="text-xs text-slate-500">{{ app.trackerLocked ? 'Tracker is open in Excel — close it to create.' : 'Creates the folder, posting.txt, session.json and the tracker row.' }}</span>
+          <button class="btn-primary" :disabled="creating || app.trackerLocked" :title="app.trackerLocked ? 'Close Excel first' : undefined" @click="create()">{{ creating ? 'Creating…' : 'Create application' }}</button>
         </div>
       </div>
     </div>

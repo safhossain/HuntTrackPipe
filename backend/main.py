@@ -10,6 +10,8 @@ from fastapi.responses import JSONResponse
 from .api.routers import extract, files, qa, sessions, settings
 from .config import settings as get_settings
 from .duplicates import DuplicateError
+from .excel.dropdown_sync import compare_dropdowns, dropdown_cache
+from .excel.lock_watch import lock_watch
 from .excel.tracker import TrackerError, TrackerLocked
 from .files.convert import ConversionError
 from .jev.client import JevError
@@ -20,13 +22,31 @@ from .qa.answer import CandidateContextMissing
 log = logging.getLogger("htp.api")
 
 
+def _on_tracker_unlocked() -> None:
+    """sigOFF: safe to open the workbook — refresh dropdown drift once."""
+    cfg = get_settings()
+    dropdown_cache.clear()
+    result = compare_dropdowns(cfg, locked=False, force=True)
+    log.info("tracker unlocked; dropdown_sync=%s", result.status)
+
+
 @asynccontextmanager
 async def _lifespan(_: FastAPI):
     cfg = get_settings()
     path = setup_logging(cfg)
-    log.info("API started; applications_dir=%s tracker=%s log=%s", cfg.applications_abs, cfg.tracker_abs, path)
-    yield
-    log.info("API stopped")
+    lock_watch.set_unlock_callback(_on_tracker_unlocked)
+    snap = lock_watch.start(cfg.tracker_abs)
+    if not snap.locked:
+        compare_dropdowns(cfg, locked=False, force=True)
+    log.info(
+        "API started; applications_dir=%s tracker=%s log=%s locked=%s watching=%s",
+        cfg.applications_abs, cfg.tracker_abs, path, snap.locked, snap.watching,
+    )
+    try:
+        yield
+    finally:
+        lock_watch.stop()
+        log.info("API stopped")
 
 
 app = FastAPI(title="HuntTrackPipe API", version="0.1.0", lifespan=_lifespan)

@@ -8,6 +8,7 @@ python-dotenv
 httpx
 anthropic
 openpyxl
+watchdog
 # Files (convert / combine / thumbnails). docx -> pdf also needs LibreOffice on PATH.
 pymupdf
 pypdf

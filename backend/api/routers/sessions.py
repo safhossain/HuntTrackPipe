@@ -6,7 +6,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
-from ...columns import EXTRACTED_COLUMNS
+from ...columns import EXTRACTED_COLUMNS, editable_list_options
 from ...excel.tracker import TrackerError, TrackerLocked
 from ...pipeline import Extraction, create_application, extract
 from ...sessions.models import utc_now
@@ -104,8 +104,9 @@ def write_row(folder: str, req: RowWriteRequest) -> RowWriteResponse:
     store, session = _load_or_404(folder)
     values = coerce_row_values(req.values)
     tracker = get_tracker()
+    lists = editable_list_options(get_settings())
     try:
-        report = tracker.write_row(folder, values, force_columns=set(req.force_columns))
+        report = tracker.write_row(folder, values, force_columns=set(req.force_columns), list_options=lists)
     except TrackerLocked:
         prev = session.review.pending_write or {"values": {}, "force_columns": []}
         session.review.pending_write = {
@@ -180,7 +181,12 @@ def retry_pending(folder: str) -> RowWriteResponse:
         raise HTTPException(400, "Nothing pending for this session.")
     tracker = get_tracker()
     values = coerce_row_values(pending.get("values", {}))
-    report = tracker.write_row(folder, values, force_columns=set(pending.get("force_columns", [])))
+    report = tracker.write_row(
+        folder,
+        values,
+        force_columns=set(pending.get("force_columns", [])),
+        list_options=editable_list_options(get_settings()),
+    )
     session.review.values.update({k: v for k, v in values.items() if v is not None})
     session.review.pending_write = None
     session.review.written_at = utc_now()

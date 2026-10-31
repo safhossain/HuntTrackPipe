@@ -16,16 +16,12 @@ import sys
 from datetime import date
 from pathlib import Path
 
-from .columns import OPTIONS
+from .columns import resolved_options
 from .config import load_settings
 from .duplicates import DuplicateError
 from .excel.tracker import TrackerError, TrackerLocked
 from .logs import setup_logging
 from .pipeline import create_application, extract
-
-STATUSES = tuple(OPTIONS["Application_Status"])
-APPLIED_THROUGH = tuple(OPTIONS["Applied_Through"])
-FOUND_FROM = tuple(OPTIONS["Found_From"])
 
 
 def _read_posting(arg: str) -> str:
@@ -43,13 +39,16 @@ def _dump(obj) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Resolve choices after loading config so CLI matches UI/config options.
+    early = load_settings()
+    opts = resolved_options(early.options)
     p = argparse.ArgumentParser(prog="python -m backend.run", description="HuntTrackPipe core pipeline")
     p.add_argument("--posting", required=True, help="path to posting .txt, or '-' for stdin")
     p.add_argument("--url", help="Posting_URL (manual column)")
     p.add_argument("--applied-date", type=date.fromisoformat, help="Applied_Date as YYYY-MM-DD")
-    p.add_argument("--status", choices=STATUSES, help="Application_Status (default: Not Applied)")
-    p.add_argument("--applied-through", choices=APPLIED_THROUGH, help="Applied_Through")
-    p.add_argument("--found-from", choices=FOUND_FROM, help="Found_From")
+    p.add_argument("--status", choices=tuple(opts["Application_Status"]), help="Application_Status (default: Not Applied)")
+    p.add_argument("--applied-through", choices=tuple(opts["Applied_Through"]), help="Applied_Through")
+    p.add_argument("--found-from", choices=tuple(opts["Found_From"]), help="Found_From")
     p.add_argument("--confirmation", help="Confirmation_#")
     p.add_argument("--no-jev", action="store_true", help="skip Jev; LLM extracts every field")
     p.add_argument("--no-llm", action="store_true", help="skip the LLM; only Jev direct values are used")

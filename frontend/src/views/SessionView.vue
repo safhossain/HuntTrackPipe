@@ -195,7 +195,7 @@ const pretty = (o: unknown) => JSON.stringify(o, null, 2)
 
     <div v-if="detail.session.review.pending_write" class="flex items-center justify-between rounded-md bg-amber-50 p-3 text-sm text-amber-900">
       <span>Excel write pending for: <span class="font-mono">{{ Object.keys(detail.session.review.pending_write.values).join(', ') }}</span>. Close Excel, then retry.</span>
-      <button class="btn-primary" :disabled="saving" @click="retry">Retry</button>
+      <button class="btn-primary" :disabled="saving || app.trackerLocked" :title="app.trackerLocked ? 'Close Excel first' : undefined" @click="retry">Retry</button>
     </div>
     <div v-if="detail.row_error" class="rounded-md bg-red-50 p-3 text-sm text-red-800">Tracker could not be read: {{ detail.row_error }}</div>
     <div v-else-if="!detail.row" class="rounded-md bg-amber-50 p-3 text-sm text-amber-900">No row in the tracker for this folder yet. Saving will create one.</div>
@@ -208,7 +208,7 @@ const pretty = (o: unknown) => JSON.stringify(o, null, 2)
       <div class="card space-y-3">
         <div class="flex items-baseline justify-between">
           <h3 class="font-semibold">Tracker row <span class="text-xs font-normal text-slate-500">(values read from Excel; your edits overwrite)</span></h3>
-          <button class="btn-primary" :disabled="saving || !dirty.length" @click="save">{{ saving ? 'Saving…' : `Save ${dirty.length ? `(${dirty.length})` : ''}` }}</button>
+          <button class="btn-primary" :disabled="saving || !dirty.length || app.trackerLocked" :title="app.trackerLocked ? 'Close Excel first' : undefined" @click="save">{{ saving ? 'Saving…' : `Save ${dirty.length ? `(${dirty.length})` : ''}` }}</button>
         </div>
         <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <FieldInput v-for="c in columns" :key="c" :column="c" :model-value="form[c] ?? null" :hint="dirty.includes(c) ? '• edited' : undefined" @update:model-value="(v) => setField(c, v)" />
@@ -242,7 +242,7 @@ const pretty = (o: unknown) => JSON.stringify(o, null, 2)
             </table>
             <div class="flex items-center justify-end gap-3">
               <span class="text-xs text-slate-500">Selected columns overwrite the tracker cell.</span>
-              <button class="btn-primary" :disabled="saving || !reChosen.length" @click="applyReextract">Apply {{ reChosen.length ? `(${reChosen.length})` : '' }}</button>
+              <button class="btn-primary" :disabled="saving || !reChosen.length || app.trackerLocked" :title="app.trackerLocked ? 'Close Excel first' : undefined" @click="applyReextract">Apply {{ reChosen.length ? `(${reChosen.length})` : '' }}</button>
             </div>
           </template>
         </template>

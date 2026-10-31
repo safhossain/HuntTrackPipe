@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Any
 
-from .columns import MANUAL_COLUMNS
+from .columns import MANUAL_COLUMNS, editable_list_options
 from .config import Settings
 from .duplicates import DuplicateError, find_duplicates, posting_hash
 from .excel.tracker import Tracker, WriteReport
@@ -148,7 +148,7 @@ def create_application(
     log.info("created %s (jev=%s llm=%s)", name, bool(extraction.jev), bool(extraction.llm))
 
     try:
-        report = tracker.write_row(name, row)
+        report = tracker.write_row(name, row, list_options=editable_list_options(cfg))
     except Exception:
         session.review.pending_write = {"values": row, "force_columns": []}
         store.save(session)

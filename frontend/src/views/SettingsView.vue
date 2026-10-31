@@ -116,11 +116,24 @@ const lineClass = (ln: string) => (/ ERROR +/.test(ln) ? 'text-red-700' : / WARN
 
     <div v-if="app.settings" class="card space-y-2 text-sm">
       <h3 class="font-semibold">Status</h3>
-      <div class="grid gap-x-6 gap-y-1 sm:grid-cols-2">
+      <div class="grid gap-x-6 gap-y-2 sm:grid-cols-2">
         <div><span :class="app.settings.keys.TYPESAFE_API_KEY ? 'text-emerald-600' : 'text-red-600'">●</span> <span class="font-mono">TYPESAFE_API_KEY</span> {{ app.settings.keys.TYPESAFE_API_KEY ? 'set' : 'missing' }}</div>
         <div><span :class="app.settings.keys.ANTHROPIC_API_KEY ? 'text-emerald-600' : 'text-red-600'">●</span> <span class="font-mono">ANTHROPIC_API_KEY</span> {{ app.settings.keys.ANTHROPIC_API_KEY ? 'set' : 'missing' }}</div>
-        <div><span :class="app.settings.tracker_exists ? 'text-emerald-600' : 'text-red-600'">●</span> tracker <span class="font-mono text-xs">{{ app.settings.paths.tracker_path }}</span></div>
-        <div><span :class="app.settings.candidate_context_exists ? 'text-emerald-600' : 'text-amber-600'">●</span> candidate context <span class="font-mono text-xs">{{ app.settings.paths.candidate_context_path }}</span></div>
+        <div class="min-w-0 sm:col-span-2">
+          <div class="flex min-w-0 items-baseline gap-1.5">
+            <span :class="app.trackerLocked ? 'text-amber-600' : app.settings.tracker_exists ? 'text-emerald-600' : 'text-red-600'">●</span>
+            <span class="shrink-0">tracker</span>
+            <span v-if="app.trackerLocked" class="shrink-0 text-amber-800">(open in Excel)</span>
+          </div>
+          <p class="mt-0.5 break-all font-mono text-xs text-slate-600" :title="app.settings.paths.tracker_path">{{ app.settings.paths.tracker_path }}</p>
+        </div>
+        <div class="min-w-0 sm:col-span-2">
+          <div class="flex min-w-0 items-baseline gap-1.5">
+            <span :class="app.settings.candidate_context_exists ? 'text-emerald-600' : 'text-amber-600'">●</span>
+            <span class="shrink-0">candidate context</span>
+          </div>
+          <p class="mt-0.5 break-all font-mono text-xs text-slate-600" :title="app.settings.paths.candidate_context_path">{{ app.settings.paths.candidate_context_path }}</p>
+        </div>
       </div>
       <p class="text-xs text-slate-500">API keys live in <span class="font-mono">.env</span> next to <span class="font-mono">htp.config.json</span>; restart the API after changing them.</p>
     </div>

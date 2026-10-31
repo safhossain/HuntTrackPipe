@@ -51,6 +51,9 @@ class Settings(BaseModel):
     llm: LLMSettings = Field(default_factory=LLMSettings)
     files: FileSettings = Field(default_factory=FileSettings)
     backups_keep: int = 10
+    # Editable dropdown lists (Application_Status, Applied_Through, Found_From).
+    # Absent keys fall back to shipped defaults in columns.DEFAULT_OPTIONS.
+    options: dict[str, list[str]] = Field(default_factory=dict)
 
     def _abs(self, p: Path) -> Path:
         return p if p.is_absolute() else (REPO_ROOT / p).resolve()

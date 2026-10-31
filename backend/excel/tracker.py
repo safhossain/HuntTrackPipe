@@ -19,6 +19,7 @@ from typing import Any
 
 from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter, range_boundaries
+from openpyxl.worksheet.datavalidation import DataValidation
 from openpyxl.worksheet.table import Table
 from openpyxl.worksheet.worksheet import Worksheet
 
@@ -34,7 +35,51 @@ DATE_COLS = {"Applied_Date", "Deadline"}
 NEW_ROW_DEFAULTS = {"Application_Status": "Not Applied", "Outcome": "Pending"}
 DATE_FORMAT = "yyyy-mm-dd"
 BACKUP_DIR = ".htp_backup"
+# Excel inline list formula1 (contents inside the quotes) max length.
+EXCEL_LIST_MAX = 255
+WHOLE_COL_END = 1_048_576
 log = logging.getLogger("htp.tracker")
+
+
+def _dv_covers_column(dv: DataValidation, col_idx: int) -> bool:
+    for part in str(dv.sqref or "").replace(",", " ").split():
+        try:
+            min_c, _min_r, max_c, _max_r = range_boundaries(part)
+        except ValueError:
+            continue
+        if min_c == col_idx and max_c == col_idx:
+            return True
+    return False
+
+
+def _list_formula(values: list[str]) -> str:
+    if any("," in v for v in values):
+        raise TrackerError("Dropdown values cannot contain commas (Excel list delimiter).")
+    joined = ",".join(values)
+    if len(joined) > EXCEL_LIST_MAX:
+        raise TrackerError(
+            f"Dropdown list is too long for Excel inline validation "
+            f"({len(joined)} > {EXCEL_LIST_MAX} characters)."
+        )
+    return f'"{joined}"'
+
+
+def _apply_list_validations(ws: Worksheet, headers: dict[str, int], options_by_header: dict[str, list[str]]) -> list[str]:
+    """Replace whole-column list validations for the given headers. Returns columns touched."""
+    touched: list[str] = []
+    dvs = ws.data_validations.dataValidation
+    for name, values in options_by_header.items():
+        if name not in headers:
+            continue
+        col = headers[name]
+        remaining = [dv for dv in dvs if not _dv_covers_column(dv, col)]
+        dvs[:] = remaining
+        letter = get_column_letter(col)
+        dv = DataValidation(type="list", formula1=_list_formula(values), allow_blank=True)
+        dv.add(f"{letter}2:{letter}{WHOLE_COL_END}")
+        ws.add_data_validation(dv)
+        touched.append(name)
+    return touched
 
 
 class TrackerError(RuntimeError):
@@ -65,16 +110,49 @@ def _norm(v: Any) -> Any:
     return v
 
 
+def owner_file_for(tracker_path: Path) -> Path:
+    """Excel's lock/owner file next to the workbook (``~$name.xlsx``)."""
+    p = Path(tracker_path)
+    return p.with_name(f"~${p.name}")
+
+
+def parse_list_formula(formula1: str | None) -> list[str] | None:
+    """Parse an inline Excel list ``formula1`` (``\"a,b,c\"``) into values.
+
+    Excel often stores ``\"a, b, c\"`` (space after commas). Each item is
+    stripped so those match HTP's unspaced option lists.
+
+    Returns ``None`` when the formula is missing or not an inline comma list
+    (e.g. a named range / sheet reference).
+    """
+    if formula1 is None:
+        return None
+    s = str(formula1).strip()
+    if len(s) >= 2 and s[0] == '"' and s[-1] == '"':
+        s = s[1:-1]
+    if not s:
+        return []
+    # Named ranges / sheet refs are not comparable to HTP option lists here.
+    if s.startswith("=") or "!" in s or s.startswith("$"):
+        return None
+    return [part.strip() for part in s.split(",")]
+
+
+
 class Tracker:
     def __init__(self, path: Path, backups_keep: int = 10):
         self.path = Path(path)
         self.backups_keep = backups_keep
 
+    @property
+    def owner_file(self) -> Path:
+        return owner_file_for(self.path)
+
     # ------------------------------------------------------------------ io
     def check_writable(self) -> None:
         if not self.path.exists():
             raise TrackerError(f"Tracker not found: {self.path}")
-        owner = self.path.with_name(f"~${self.path.name}")
+        owner = self.owner_file
         if owner.exists():
             log.warning("tracker locked: %s present", owner.name)
             raise TrackerLocked(f"{self.path.name} appears to be open in Excel (found {owner.name}). Close it and retry.")
@@ -84,6 +162,24 @@ class Tracker:
         except PermissionError as exc:
             log.warning("tracker locked: PermissionError on r+b")
             raise TrackerLocked(f"{self.path.name} is locked by another program. Close it and retry.") from exc
+
+    def read_list_options(self, columns: list[str] | tuple[str, ...]) -> dict[str, list[str] | None]:
+        """Return inline list-validation choices per header name (``None`` if missing/unparsed)."""
+        _, ws, table = self._open()
+        headers = self._headers(ws, table)
+        out: dict[str, list[str] | None] = {}
+        for name in columns:
+            if name not in headers:
+                out[name] = None
+                continue
+            col = headers[name]
+            found: list[str] | None = None
+            for dv in ws.data_validations.dataValidation:
+                if dv.type == "list" and _dv_covers_column(dv, col):
+                    found = parse_list_formula(dv.formula1)
+                    break
+            out[name] = found
+        return out
 
     def _open(self):
         wb = load_workbook(self.path)
@@ -175,6 +271,23 @@ class Tracker:
         if table.autoFilter is not None:
             table.autoFilter.ref = ref
 
+    def sync_list_validations(self, options_by_header: dict[str, list[str]]) -> list[str]:
+        """Rewrite whole-column list data-validations for ``options_by_header`` (by header name).
+
+        Returns the column names that were updated. Raises ``TrackerLocked`` when
+        Excel has the file open.
+        """
+        if not options_by_header:
+            return []
+        self.check_writable()
+        wb, ws, table = self._open()
+        headers = self._headers(ws, table)
+        touched = _apply_list_validations(ws, headers, options_by_header)
+        if touched:
+            self._save(wb)
+            log.info("synced list validations: %s", touched)
+        return touched
+
     def write_row(
         self,
         folder: str,
@@ -182,8 +295,12 @@ class Tracker:
         *,
         fill_only_empty: bool = True,
         force_columns: set[str] | frozenset[str] = frozenset(),
+        list_options: dict[str, list[str]] | None = None,
     ) -> WriteReport:
         """Write ``values`` ({column: value}) to the row for ``folder``.
+
+        When ``list_options`` is set, whole-column list validations for those
+        headers are refreshed in the same save (heals a prior locked eager sync).
 
         Returns what was written and what was skipped. Raises ``TrackerLocked``
         when Excel has the file open, ``TrackerError`` for unknown columns.
@@ -233,6 +350,9 @@ class Tracker:
         for column, formula in FORMULA_COLS.items():
             if column in headers and _is_empty(ws.cell(row, headers[column]).value):
                 ws.cell(row, headers[column]).value = formula
+
+        if list_options:
+            _apply_list_validations(ws, headers, list_options)
 
         self._save(wb)
         log.info(

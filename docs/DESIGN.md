@@ -116,7 +116,11 @@ Applications/
 }
 ```
 
-Source-of-truth rule: Excel owns every tracker column. `review.values` is what the engine last wrote; on session open the engine re-reads the row (matched via the `Folder` column) and shows Excel's values. Everything that is not a tracker column (posting text, Jev/LLM raw output, file manifest, Q&A) lives only in `session.json`.
+Source-of-truth rule: Excel owns every tracker **row value**. `review.values` is what the engine last wrote; on session open the engine re-reads the row (matched via the `Folder` column) and shows Excel's values. Everything that is not a tracker column (posting text, Jev/LLM raw output, file manifest, Q&A) lives only in `session.json`.
+
+**Dropdown vocabulary** for `Application_Status`, `Applied_Through`, and `Found_From` is owned by HTP (`htp.config.json` `options`, falling back to shipped defaults in `columns.DEFAULT_OPTIONS`). The UI can append values via `POST /api/meta/options/{column}`; Excel whole-column list data-validations are mirrored from those lists (eager on add; reinforced on every tracker write; Settings **Sync Excel from HTP**). `Work_Mode`, `Employment_Type`, and `Outcome` stay code-only (Jev mappings / terminal semantics).
+
+**Tracker lock signal:** Excel’s sibling `~$…xlsx` owner file is `sigON` / `sigOFF`. A filesystem watcher (`backend/excel/lock_watch.py`) updates in-memory lock state; status reads also `exists()`-probe as backup. While locked, the UI greys out Create / Save row / Sync and shows a banner. Dropdown drift compare (`GET /tracker/status`) runs only when unlocked (API start, unlock transition, Settings refresh, cached by mtime + options fingerprint)—never by opening the workbook on a timer while Excel holds it.
 
 ## 5. Pipeline per new application
 
@@ -238,7 +242,7 @@ Operations: add one or several questions (one per line) with optional limit; edi
 ## 12. UI screens
 
 1. **Dashboard** - list of application folders with status/outcome read from Excel; "New application". Deadline is not a column here. Row color follows Outcome when it is terminal (Withdrawn grey, Rejected red, Offer and Accepted light green). While Outcome is Pending or blank, Application_Status sets the color (Not Applied yellow, Applied the default white, Recruiter-Screening light blue, Technical Interview orange, Final Round light purple).
-2. **New application** - paste posting + URL -> Run -> three panels: Jev results (chips with probability/confidence), extracted fields (editable form), manual fields (Applied_Date, Posting_URL, Application_Status, Outcome, Applied_Through, Found_From, Confirmation_#). A "Possible duplicate" banner lists matching sessions (section 15); "Create" makes the folder and writes the row, asking for confirmation when a duplicate was flagged.
+2. **New application** - paste posting + URL -> Run -> three panels: Jev results (chips with probability/confidence), extracted fields (editable form), manual fields (Applied_Date, Posting_URL, Application_Status, Outcome, Applied_Through, Found_From, Confirmation_#). Dropdowns for Status / Applied Through / Found From include **Add…** to permanently grow the list (config + Excel DV). A "Possible duplicate" banner lists matching sessions (section 15); "Create" makes the folder and writes the row, asking for confirmation when a duplicate was flagged.
 3. **Session** - tabs: Overview (Excel read-back, edit manual fields, write; **Re-extract** card runs Jev/LLM again on the stored posting and shows a per-column diff against the row with checkboxes; "Apply" writes the chosen columns with `force_columns`), Files (section 10), Questions (section 11), Log (raw Jev/LLM payloads of the latest run, usage).
 4. **Convert** - standalone converter (section 10); nothing is stored.
 5. **Settings** - edits `htp.config.json` through `PUT /settings` (partial, deep-merged, validated; `settings()` cache cleared); shows key presence (never the keys), tracker / candidate-context presence, resolved paths, and a tail of the log file.
@@ -254,16 +258,26 @@ Operations: add one or several questions (one per line) with optional limit; edi
   "jev": { "model": "jev-1.13.0", "noul_include_threshold": 0.35, "choice_direct_confidence": 0.7, "doc_noul_threshold": 0.5 },
   "llm": { "extract_model": "claude-haiku-5-5", "qa_model": "claude-haiku-5-5", "effort": "low", "max_tokens": 2048, "token_warn": 80000 },
   "files": { "image_dpi": 150, "soffice_path": null },
-  "backups_keep": 10
+  "backups_keep": 10,
+  "options": {
+    "Application_Status": ["Not Applied", "Applied", "Recruiter-Screening", "Technical Interview", "Final Round"],
+    "Applied_Through": ["Org-Portal", "Indeed", "LinkedIn", "Email", "Workday", "Greenhouse", "AshbyHQ", "UltiPro", "Other"],
+    "Found_From": ["HiringCafe", "LinkedIn", "Indeed", "GCJobs", "CRA", "Other"]
+  }
 }
 ```
+
+`options` is optional; absent keys use the shipped defaults. The first successful `POST /meta/options/{column}` seeds all three editable lists into the config file.
 
 ## 14. API (FastAPI, prefix `/api`)
 
 | Method + path | Purpose |
 |---|---|
 | `GET /health` | cold-start poll |
-| `GET /meta` / `GET /settings` | column lists + dropdown options; key presence, paths, tracker status |
+| `GET /meta` / `GET /settings` | column lists + resolved dropdown options (+ `editable_option_columns`); key presence, paths, tracker status |
+| `POST /meta/options/{column}` `{value}` | append to an editable dropdown list (`Application_Status` / `Applied_Through` / `Found_From`); persists to config; syncs Excel list DV (options still saved if Excel is locked — `excel_synced: false`) |
+| `POST /meta/options/sync` | push HTP editable option lists into Excel list DVs; 423 if locked |
+| `GET /tracker/status?force=` | lock state (`~$` watch + probe) + dropdown DV compare vs HTP (`in_sync` / `mismatched` / `locked` / …); `suggest_sync` when unlocked and mismatched |
 | `GET /sessions` / `GET /sessions/{folder}` | list / load (includes Excel read-back and unmanaged folders) |
 | `POST /extract` | posting -> Jev answers + derived + LLM values in one call (`use_jev` / `use_llm` toggles); also returns `duplicates: [{folder, reason}]` |
 | `POST /sessions` | create folder + session.json + Excel row (extraction + manual values + row overrides); 409 `DuplicateError` (with `duplicates`) unless `allow_duplicate: true` |

@@ -92,8 +92,43 @@ export interface Meta {
   engine_columns: string[]
   date_columns: string[]
   options: Record<string, string[]>
+  editable_option_columns: string[]
   doc_types: string[]
   upload_modes: string[]
+}
+
+export interface AddOptionResponse {
+  column: string
+  value: string
+  options: Record<string, string[]>
+  excel_synced: boolean
+  excel_error: string | null
+}
+
+export interface DropdownColumnDiff {
+  column: string
+  htp: string[]
+  excel: string[] | null
+  changed: boolean
+}
+
+export interface DropdownSyncStatus {
+  status: 'in_sync' | 'mismatched' | 'locked' | 'missing' | 'error' | string
+  columns: DropdownColumnDiff[]
+  checked_at: string | null
+  tracker_mtime: number | null
+  detail: string | null
+}
+
+export interface TrackerStatus {
+  locked: boolean
+  lock_source: string | null
+  owner_file: string | null
+  tracker_path: string
+  changed_at: string | null
+  watching: boolean
+  dropdown_sync: DropdownSyncStatus
+  suggest_sync: boolean
 }
 
 export interface SettingsView {
@@ -102,6 +137,7 @@ export interface SettingsView {
   keys: Record<string, boolean>
   tracker_exists: boolean
   candidate_context_exists: boolean
+  tracker_status?: TrackerStatus | null
 }
 
 export interface NoulAnswer { type: 'noul'; noul: number }
@@ -287,6 +323,14 @@ export interface SessionDetail {
 
 export const api = {
   meta: () => request<Meta>('/meta'),
+  addOption: (column: string, value: string) =>
+    request<AddOptionResponse>(`/meta/options/${encodeURIComponent(column)}`, {
+      method: 'POST',
+      body: JSON.stringify({ value }),
+    }),
+  syncOptions: () => request<TrackerStatus>('/meta/options/sync', { method: 'POST' }),
+  trackerStatus: (force = false) =>
+    request<TrackerStatus>(`/tracker/status${force ? '?force=true' : ''}`),
   settings: () => request<SettingsView>('/settings'),
   updateSettings: (config: Record<string, unknown>) =>
     request<SettingsView>('/settings', { method: 'PUT', body: JSON.stringify({ config }) }),
