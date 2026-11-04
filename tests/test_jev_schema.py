@@ -68,7 +68,7 @@ def test_schema_is_strict_and_ordered():
     assert schema["additionalProperties"] is False
     assert "requisition_id" not in fields and "work_mode" not in fields
     assert fields.index("organization") < fields.index("employment_type") < fields.index("position_level")
-    assert schema["properties"]["employment_type"]["anyOf"][0]["enum"][0] == "Full-time"
+    assert schema["properties"]["employment_type"]["anyOf"][0]["enum"][0] == "Permanent Full-time"
     for spec in schema["properties"].values():
         assert "maxItems" not in spec
 
@@ -99,21 +99,31 @@ def test_row_values_merge_direct_and_llm():
         "requisition_id": " R-1 ",
         "organization": "Acme",
         "position_title": "Dev",
+        "location_country": " Canada ",
+        "location_city": "Toronto",
         "compensation": None,
-        "employment_type": "Full-time",
+        "employment_type": "Permanent Full-time",
         "deadline": "2026-12-01",
         "recruiter_name": "",
         "recruiter_contact": "x@y.z",
-        "role_categories": ["Backend", " Cloud ", "Data", "ML", ""],
+        "subrole_categories": ["Backend", " Cloud ", "Data", "ML", ""],
         "position_level": "Senior",
         "work_mode": "Hybrid",  # ignored: Jev decided Remote directly
     })
     assert out["Work_Mode"] == "Remote"
     assert out["Requisition_ID"] == "R-1"
+    assert out["Location_Country"] == "Canada" and out["Location_City"] == "Toronto"
     assert out["Compensation"] is None and out["Recruiter_Name"] is None
     assert out["Deadline"] == date(2026, 12, 1)
-    assert out["Role_Categories"] == "Backend, Cloud, Data"
+    assert out["Subrole_Categories"] == "Backend, Cloud, Data"
     assert list(out) == list(FIELD_TO_COLUMN.values())
+
+
+def test_derive_gates_location_fields():
+    cfg = JevSettings()
+    d = derive(answers(has_location_country=noul(0.9), has_location_city=noul(0.1)), cfg)
+    assert "location_country" in d.schema_fields
+    assert "location_city" not in d.schema_fields
 
 
 def test_row_values_keeps_deadline_phrase():

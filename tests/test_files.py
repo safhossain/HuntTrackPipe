@@ -128,3 +128,20 @@ def test_convert_input_appends_new_inputs(env, session, fm):
     added = fm.convert_input(session, 0, "png")
     assert [a.file for a in added] == ["1_resume_p1.png", "2_resume_p2.png"]
     assert all(a.doc_type == "Resume" for a in added)
+
+
+def test_convert_all_to_pdf_skips_existing_pdfs(env, session, fm):
+    fm.add_input_bytes(session, "resume.pdf", pdf_bytes(1, "resume"))
+    with pytest.raises(FileError, match="No non-PDF"):
+        fm.convert_all_to_pdf(session)
+
+    fm.add_input_bytes(session, "shot.png", png_bytes())
+    added = fm.convert_all_to_pdf(session)
+    assert len(added) == 1
+    assert cv.ext_of(added[0].file) == "pdf"
+    # Original PDF + PNG kept; new PDF appended
+    assert [i.file for i in session.files.inputs] == [
+        "0_resume.pdf",
+        "1_shot.png",
+        added[0].file,
+    ]

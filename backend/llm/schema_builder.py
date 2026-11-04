@@ -19,13 +19,15 @@ FIELD_TO_COLUMN: dict[str, str] = {
     "requisition_id": "Requisition_ID",
     "organization": "Organization",
     "position_title": "Position_Title",
+    "location_country": "Location_Country",
+    "location_city": "Location_City",
     "compensation": "Compensation",
     "work_mode": "Work_Mode",
     "employment_type": "Employment_Type",
     "deadline": "Deadline",
     "recruiter_name": "Recruiter_Name",
     "recruiter_contact": "Recruiter_Contact",
-    "role_categories": "Role_Categories",
+    "subrole_categories": "Subrole_Categories",
     "position_level": "Position_Level",
 }
 
@@ -49,6 +51,16 @@ FIELD_SPECS: dict[str, dict[str, Any]] = {
         "Name of the hiring organization (not the job board or staffing agency, unless it is hiring for itself). null if unknown."
     ),
     "position_title": _nullable_string("The job title exactly as written. null if none."),
+    "location_country": _nullable_string(
+        "Country (or territory) where the role is based / the office is located. Prefer a common English country name "
+        "(e.g. 'Canada', 'United States', 'United Kingdom', 'Germany'). Infer from a stated city or province only when "
+        "unambiguous (e.g. Toronto/Ontario -> Canada). null if the posting gives no usable national location."
+    ),
+    "location_city": _nullable_string(
+        "City, town or metro area where the role is based / the office is located, as written when possible "
+        "(e.g. 'Toronto', 'New York', 'San Francisco Bay Area'). null if no city/metro is stated; do not invent one "
+        "for remote-only postings that name no office city."
+    ),
     "compensation": _nullable_string(
         "Pay as written, including currency and period, e.g. 'CAD 80,000-95,000 / year' or '$35/hour'. null if no numeric pay is stated."
     ),
@@ -65,13 +77,13 @@ FIELD_SPECS: dict[str, dict[str, Any]] = {
     ),
     "recruiter_name": _nullable_string("Full name of the named contact person (recruiter / hiring manager). null if none."),
     "recruiter_contact": _nullable_string("Email, phone or profile URL of the named contact person. null if none."),
-    "role_categories": {
+    "subrole_categories": {
         "type": "array",
         "items": {"type": "string"},
         "description": (
-            f"Between 1 and {MAX_ROLE_CATEGORIES} short labels for the technical area of the role, most specific first "
-            "(e.g. 'Backend', 'Frontend', 'Full-stack', 'Mobile', 'DevOps', 'Cloud', 'Data Engineering', 'Machine Learning', "
-            f"'QA', 'Embedded', 'Security'). Never more than {MAX_ROLE_CATEGORIES}. Empty array if it cannot be inferred."
+            f"Between 1 and {MAX_ROLE_CATEGORIES} short fine-grained labels for the role's technical sub-areas, "
+            "most specific first (e.g. 'React', 'FastAPI', 'Kubernetes', 'SOC', 'Power BI', 'PyTorch'). "
+            f"Never more than {MAX_ROLE_CATEGORIES}. Empty array if it cannot be inferred."
         ),
     },
     "position_level": _nullable_string(

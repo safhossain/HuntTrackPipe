@@ -3,6 +3,8 @@ import { computed, onMounted, ref } from 'vue'
 import { api, type FilesView, type InputFile } from '../api/client'
 import { useAppStore } from '../stores/app'
 import { UPLOAD_MODE_LABELS, errorText, extOf, fmtBytes } from '../utils'
+import ConvertAllPdfButton from './ConvertAllPdfButton.vue'
+import ConvertTargetButton from './ConvertTargetButton.vue'
 
 const props = defineProps<{ folder: string }>()
 const emit = defineEmits<{ changed: [view: FilesView] }>()
@@ -18,6 +20,7 @@ const brokenThumbs = ref<Set<string>>(new Set())
 
 const inputs = computed(() => view.value?.files.inputs ?? [])
 const typedIndices = computed(() => inputs.value.filter((i) => i.doc_type).map((i) => i.index))
+const nonPdfCount = computed(() => inputs.value.filter((i) => extOf(i.file) !== 'pdf').length)
 const combineHighlight = computed(() => view.value?.upload_mode === 'single_combined_file')
 const finalsHighlight = computed(() => view.value?.upload_mode === 'separate_uploads' || view.value?.upload_mode === 'single_document')
 const candidate = computed(() => (view.value?.candidate ?? 'Candidate').trim().replace(/\s+/g, '-'))
@@ -120,16 +123,24 @@ const remove = (i: InputFile) => {
   if (!confirm(`Delete ${i.file} from the folder?`)) return
   return run('delete', () => api.deleteInput(props.folder, i.index), `Deleted ${i.file}`)
 }
-const convertOne = (i: InputFile, ev: Event) => {
-  const el = ev.target as HTMLSelectElement
-  const target = el.value
-  el.value = '' // the bound value is always '', so Vue would not reset the <select> itself
+const convertOne = (i: InputFile, target: string) => {
   if (!target) return
-  return run(`convert-${i.index}`, () => api.convertInput(props.folder, i.index, target), `Converted ${i.file} → ${target}`)
+  const label = target === 'docx' ? 'DOCX (lossy)' : target.toUpperCase()
+  return run(
+    `convert-${i.index}-${target}`,
+    () => api.convertInput(props.folder, i.index, target),
+    `Converted ${i.file} → ${label}`,
+  )
 }
 const makeFinal = (i: InputFile) => run(`final-${i.index}`, () => api.makeFinals(props.folder, [i.index]), `Made ${finalName(i)}`)
 const makeAllFinals = () => run('finals', () => api.makeFinals(props.folder, null), `Made ${typedIndices.value.length} final file(s)`)
 const combineAll = () => run('combine', () => api.combine(props.folder, null), `Combined into ${combinedName.value}`)
+const convertAllPdf = () =>
+  run(
+    'convert-all-pdf',
+    () => api.convertAllToPdf(props.folder),
+    `Converted ${nonPdfCount.value} file(s) to PDF`,
+  )
 const deleteOutput = (name: string) => {
   if (!confirm(`Delete ${name}?`)) return
   return run('delete-output', () => api.deleteOutput(props.folder, name), `Deleted ${name}`)
@@ -183,9 +194,15 @@ const fromLabel = (idx: number | null) => (idx === null ? 'source removed' : (in
 
     <!-- inputs -->
     <div class="card space-y-2">
-      <div class="flex items-baseline justify-between">
+      <div class="flex items-baseline justify-between gap-2">
         <h3 class="font-semibold">Inputs <span class="text-xs font-normal text-slate-500">({{ inputs.length }}) · drag to reorder; order = combine order</span></h3>
-        <div class="flex gap-2">
+        <div class="flex flex-wrap items-center justify-end gap-2">
+          <ConvertAllPdfButton
+            :disabled="!!busy || !nonPdfCount"
+            :busy="busy === 'convert-all-pdf'"
+            :title="nonPdfCount ? `Convert ${nonPdfCount} non-PDF input(s) to PDF (results added as new inputs)` : 'No non-PDF inputs'"
+            @click="convertAllPdf"
+          />
           <button class="btn-secondary" :class="finalsHighlight && 'ring-2 ring-indigo-300'" :disabled="!!busy || !typedIndices.length" @click="makeAllFinals" :title="`Copy each typed input to ${candidate}_{DocType}_${view.x}.<ext>`">
             {{ busy === 'finals' ? 'Working…' : `Make finals (${typedIndices.length})` }}
           </button>
@@ -226,10 +243,15 @@ const fromLabel = (idx: number | null) => (idx === null ? 'source removed' : (in
                 <option value="">— type —</option>
                 <option v-for="d in app.meta?.doc_types ?? []" :key="d" :value="d">{{ d }}</option>
               </select>
-              <select class="input w-32" :disabled="!!busy || !targetsFor(i).length" :value="''" @change="convertOne(i, $event)" title="Convert; the result is added as a new input">
-                <option value="">{{ busy === `convert-${i.index}` ? 'Converting…' : 'Convert…' }}</option>
-                <option v-for="t in targetsFor(i)" :key="t" :value="t">→ {{ t.toUpperCase() }}{{ t === 'docx' ? ' (lossy)' : '' }}</option>
-              </select>
+              <ConvertTargetButton
+                v-for="t in targetsFor(i)"
+                :key="t"
+                :target="t"
+                :disabled="!!busy"
+                :busy="busy === `convert-${i.index}-${t}`"
+                :title="t === 'docx' ? 'Convert → DOCX (lossy); result added as a new input' : `Convert → ${t.toUpperCase()}; result added as a new input`"
+                @click="convertOne(i, t)"
+              />
               <span class="mx-1 h-5 border-l border-slate-200" />
               <button class="btn-secondary px-2" :disabled="!!busy || pos === 0" title="Move up" @click="move(pos, pos - 1)">▲</button>
               <button class="btn-secondary px-2" :disabled="!!busy || pos === inputs.length - 1" title="Move down" @click="move(pos, pos + 1)">▼</button>

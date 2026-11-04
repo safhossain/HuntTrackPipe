@@ -3,10 +3,10 @@ description: Current implementation state of HuntTrackPipe, what's done, what's 
 alwaysApply: true
 ---
 
-# HuntTrackPipe - Current State (2026-10-16)
+# HuntTrackPipe - Current State (2026-10-31)
 
-## Done: all 5 steps
-- **Step 1 (core + CLI)**: config, naming, session store, Jev client/questions/derive, schema builder, Claude client, post-processing, Excel writer (`backend/excel/tracker.py`), `backend/pipeline.py` (`extract()`, `create_application(..., allow_duplicate=)`), CLI `python -m backend.run` (`--allow-duplicate`, exit 5 on duplicate). Column lists / dropdown options / `META` live in `backend/columns.py`.
+## Done: all 5 steps + post-step dropdown/lock work
+- **Step 1 (core + CLI)**: config, naming, session store, Jev client/questions/derive, schema builder, Claude client, post-processing, Excel writer (`backend/excel/tracker.py`), `backend/pipeline.py` (`extract()`, `create_application(..., allow_duplicate=)`), CLI `python -m backend.run` (`--allow-duplicate`, exit 5 on duplicate). Column lists / shipped dropdown defaults / `meta_payload()` live in `backend/columns.py`.
 - **Step 2 (webapp)**: FastAPI `backend/main.py` + `backend/api/` on :8010; Vue 3 / Vite 7 / Pinia / Tailwind v4 in `frontend/` on :5180 (`strictPort`, `/api` proxy). Root `npm run dev` runs both. Screens: `DashboardView`, `NewApplicationView`, `SessionView` (tabs overview / files / questions / log), `ConvertView`, `SettingsView`.
 - **Step 3 (files)**: `backend/files/` (`convert.py`, `combine.py`, `manager.py` = `FileManager`), router `routers/files.py`, UI `components/FilesPanel.vue` + `/convert`. soffice uses persistent profile `%TEMP%/htp_lo_profile`; caches `<folder>/.converted/`, `.thumbs/`. Image outputs are named `{stem}_p{n}.png`.
 - **Step 4 (Q&A)**: `backend/qa/answer.py` (`answer_questions(session, cfg, client, ids=, feedback=, organization=, title=)`; one structured call, limit verification, one re-ask, `question.note`), router `routers/qa.py`, UI `components/QaPanel.vue`, `answers.md` rewritten on every change. User has written `JobHunting/candidate_context.txt`.
@@ -14,22 +14,27 @@ alwaysApply: true
   - `backend/logs.py`: `setup_logging(cfg, level, console_level)` (idempotent, re-points the file handler when the applications dir changes), `tail()`. Rotating file `Applications/.htp_logs/htp.log`. Loggers `htp.jev|llm|tracker|pipeline|files|qa|api`. API starts it in the FastAPI lifespan; CLI with quiet console. `GET /api/logs?lines=`.
   - `backend/duplicates.py`: `posting_hash()` (whitespace-collapsed, lower-cased sha256[:16]), `find_duplicates(cfg, text, values)` -> `[DuplicateHit(folder, reason)]` by posting hash and Requisition_ID (+Organization); `DuplicateError` -> 409 `{detail, type:"DuplicateError", duplicates}`. `Posting.hash` stored on create. `POST /extract` returns `duplicates`; `POST /sessions` takes `allow_duplicate`. UI: banner in `NewApplicationView` + `confirm()`; `ApiError.isDuplicate/duplicates`.
   - Re-extract: `POST /sessions/{f}/reextract {use_jev, use_llm}` -> `{extraction, row, diff}` (`row_diff()` in `routers/sessions.py` over `EXTRACTED_COLUMNS`, dates normalised to ISO); replaces `session.jev/llm`, writes nothing. UI card in `SessionView` overview: checkbox table of changed columns -> `writeRow(values, force_columns)`.
-  - Settings: `PUT /api/settings {config}` deep-merges into the current config, validates with `Settings`, writes `CONFIG_PATH` (paths as posix), `settings.cache_clear()`, re-points logging; 400 with field names on validation error. `GET /settings` paths now include `config_path`, `log_path`. `SettingsView.vue` at `/settings` (form, status dots, log tail).
-  - Tests: `tests/` (53 tests): `conftest.py` sets `HTP_CONFIG` before importing `backend`, builds a synthetic tracker (`make_tracker`), `env` + `session` fixtures, `sample_extraction()`. Files: `test_naming`, `test_jev_schema`, `test_tracker`, `test_pipeline` (create + duplicates + lock + unstated upload mode), `test_files` (PyMuPDF only), `test_qa` (fake client), `test_api` (TestClient; monkeypatches `extract` in `routers.extract` / `routers.sessions` and `ClaudeClient` in `routers.qa`). `pytest.ini` at root. Run `python -m pytest`.
+  - Settings: `PUT /api/settings {config}` deep-merges into the current config, validates with `Settings`, writes `CONFIG_PATH` (paths as posix), `settings.cache_clear()`, re-points logging + retargets lock watch; 400 with field names on validation error. `GET /settings` paths include `config_path`, `log_path`, `tracker_status`. `SettingsView.vue` at `/settings` (form, status, log tail).
+  - Tests: `tests/` (pytest offline): `conftest.py` sets `HTP_CONFIG` before importing `backend`, synthetic tracker, fake Jev/Claude. Includes list-DV sync, option add, tracker lock/status. Run `python -m pytest`.
 - **After step 5 (agreed):**
-  - Dashboard bottom: `frontend/src/components/DashboardMetrics.vue`. Six client-side metrics from `GET /api/sessions` (total, outcome pie, work-mode pie, status bars, applied-through bars, created-by-month bars). No chart library.
-  - Upload mode default `separate_uploads` when Jev does not state one. Existing sessions already stored as `not_stated` are left alone.
-  - Posting boxes on New application (after a run) and Session show `cleanPostingText` plus Copy all. Create still sends the raw paste.
-  - Dashboard table has no Deadline column. Row color: Outcome wins when terminal (Withdrawn grey, Rejected red, Offer/Accepted light green). Pending or blank Outcome uses Application_Status (Not Applied yellow, Applied white, Recruiter-Screening light blue, Technical Interview orange, Final Round light purple).
+  - Dashboard bottom: `DashboardMetrics.vue`. Six client-side metrics from `GET /api/sessions`. No chart library.
+  - Upload mode default `separate_uploads` when Jev does not state one. Existing `not_stated` sessions left alone.
+  - Posting boxes show `cleanPostingText` + Copy all; create/dupe/re-extract use raw paste.
+  - Dashboard: no Deadline column; row colors as before; icon-only list Refresh (reload sessions only).
+- **Editable dropdowns + Excel DV sync (2026-10-31):**
+  - `Settings.options` in config; `EDITABLE_OPTION_COLUMNS` = Application_Status, Applied_Through, Found_From. UI **Add…** via `POST /meta/options/{column}`; `POST /meta/options/sync`; `GET /tracker/status`.
+  - `excel/lock_watch.py` (`watchdog` on `~$` file) + probe; `dropdown_sync.py` compare/push; list formula parse strips spaces after commas.
+  - UI: header status PNGs in `frontend/src/img/`; `SyncDock.vue` (refresh+Excel logo, blue/yellow/grey, min/max, diffs); Create/Save/Sync greyed when locked.
 - Errors: TrackerLocked 423, DuplicateError 409, TrackerError/ValueError/ConversionError 400, FileNotFoundError 404, CandidateContextMissing 412, upload > 50 MB 413, Jev/LLM 502, FileExistsError 409.
 - `review.pending_write` is `{values, force_columns}`; set only on 423, flushed by `/row/retry`.
-- Verified in the Cursor browser against a temp tracker copy: Settings save (config file rewritten, logged), re-extract (LLM-only) showing a single differing column and Apply overwriting the cell, duplicate banner on New application, 409 via API. `vue-tsc --noEmit` passes.
 
 ## Next (ideas, none agreed yet)
-- Dashboard filters/sorting; bulk status update; export of answers; Jev question tuning from real postings; CI for pytest + vue-tsc.
+- Dashboard filters/sorting; bulk status update; export of answers; Jev question tuning from real postings; CI for pytest + vue-tsc; pull Excel DV lists into config; Lists-sheet DV if inline 255-char limit is hit.
 
 ## Tracker state
-Table `Applications` headers end with `Found_From` (column T); `Folder` is column S. Days_Since_Applied formula is column P. Dropdowns cover whole columns E, F, J, M, Q, T. `Found_From` choices: HiringCafe, LinkedIn, Indeed, GCJobs, CRA, Other. It is a manual create/edit field and is not a dashboard column. User keeps the workbook closed while the engine runs.
+Table `Applications` includes `Role_Category` + `Subrole_Categories` (was `Role_Categories`); `Confirmation_#` removed. Location columns are free text. List DVs are **table-body only** (not whole-column); HTP syncs editable + code-owned lists (`Work_Mode`, `Employment_Type`, `Outcome`, `Role_Category`, …) on write. User keeps the workbook closed while the engine writes.
+`Employment_Type` labels: Permanent Full-/Part-time, Contract (+ Full-/Part-Time), Internship Full-/Part-time, Co-op Full-/Part-time, Temporary, Freelance, Unknown.
+One-time migrations live under `scripts/one_time/` (`python -m scripts.one_time.migrate_locations|migrate_role_category|migrate_employment_type`; Excel closed).
 
 ## Testing conventions
 - `python -m pytest` is the first check after any backend change; `cd frontend && npx vue-tsc --noEmit` after frontend changes.

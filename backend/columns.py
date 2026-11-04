@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from .jev.questions import EMPLOYMENT_TYPE_VALUES, WORK_MODE_VALUES
+from .jev.questions import EMPLOYMENT_TYPE_VALUES, ROLE_CATEGORY_VALUES, WORK_MODE_VALUES
 from .naming import DOC_TYPES
 
 if TYPE_CHECKING:
@@ -19,13 +19,16 @@ EXTRACTED_COLUMNS: tuple[str, ...] = (
     "Requisition_ID",
     "Organization",
     "Position_Title",
+    "Location_Country",
+    "Location_City",
     "Compensation",
     "Work_Mode",
     "Employment_Type",
     "Deadline",
     "Recruiter_Name",
     "Recruiter_Contact",
-    "Role_Categories",
+    "Role_Category",
+    "Subrole_Categories",
     "Position_Level",
 )
 
@@ -35,7 +38,6 @@ MANUAL_COLUMNS: tuple[str, ...] = (
     "Application_Status",
     "Outcome",
     "Applied_Through",
-    "Confirmation_#",
     "Found_From",
 )
 
@@ -43,11 +45,22 @@ ENGINE_COLUMNS: tuple[str, ...] = ("Days_Since_Applied", "Folder")
 
 DATE_COLUMNS: tuple[str, ...] = ("Applied_Date", "Deadline")
 
-# Columns the UI may grow; Work_Mode / Employment_Type / Outcome stay code-only.
+# Columns the UI may grow; Work_Mode / Employment_Type / Outcome / Role_Category stay code-only.
 EDITABLE_OPTION_COLUMNS: tuple[str, ...] = (
     "Application_Status",
     "Applied_Through",
     "Found_From",
+)
+
+# Reinforced onto the Applications table body on every tracker write / sync.
+LIST_SYNC_COLUMNS: tuple[str, ...] = (
+    "Work_Mode",
+    "Employment_Type",
+    "Application_Status",
+    "Outcome",
+    "Applied_Through",
+    "Found_From",
+    "Role_Category",
 )
 
 DEFAULT_OPTIONS: dict[str, list[str]] = {
@@ -57,6 +70,7 @@ DEFAULT_OPTIONS: dict[str, list[str]] = {
     "Outcome": ["Pending", "Withdrawn", "Rejected", "Offer", "Accepted"],
     "Applied_Through": ["Org-Portal", "Indeed", "LinkedIn", "Email", "Workday", "Greenhouse", "AshbyHQ", "UltiPro", "Other"],
     "Found_From": ["HiringCafe", "LinkedIn", "Indeed", "GCJobs", "CRA", "Other"],
+    "Role_Category": list(ROLE_CATEGORY_VALUES.values()),
 }
 
 # Back-compat alias for shipped defaults (prefer resolved_options()).
@@ -74,9 +88,15 @@ def resolved_options(cfg_options: dict[str, list[str]] | None = None) -> dict[st
 
 
 def editable_list_options(cfg: Settings) -> dict[str, list[str]]:
-    """Subset of resolved options that Excel list-validations should mirror."""
+    """Editable dropdown lists only (Sync dock / Add…)."""
     opts = resolved_options(cfg.options)
     return {k: opts[k] for k in EDITABLE_OPTION_COLUMNS}
+
+
+def list_validation_options(cfg: Settings) -> dict[str, list[str]]:
+    """All list columns HTP mirrors into Excel table-body data validations."""
+    opts = resolved_options(cfg.options)
+    return {k: opts[k] for k in LIST_SYNC_COLUMNS}
 
 
 def meta_payload(cfg: Settings | None = None) -> dict[str, Any]:

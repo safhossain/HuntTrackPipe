@@ -55,6 +55,8 @@ class Review(BaseModel):
     values: dict[str, Any] = Field(default_factory=dict)
     written_at: str | None = None
     pending_write: dict[str, Any] | None = None
+    # UI-only flag; not written to Excel. Marks Compensation as a user estimate.
+    compensation_estimated: bool = False
 
 
 class InputFile(BaseModel):
@@ -126,3 +128,4 @@ class Session(BaseModel):
     upload_mode_source: Literal["jev", "user"] = "jev"
     files: Files = Field(default_factory=Files)
     qa: QA = Field(default_factory=QA)
+    notes: str = ""  # free-text Notes tab; session.json only

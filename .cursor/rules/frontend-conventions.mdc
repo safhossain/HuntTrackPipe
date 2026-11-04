@@ -8,5 +8,7 @@ alwaysApply: false
 
 - Stack: Vue 3, Vite 7, Pinia, Tailwind v4. No chart library. Dashboard charts are SVG and CSS in `DashboardMetrics.vue`, fed by the sessions list already loaded on the dashboard.
 - `cleanPostingText` (`frontend/src/utils.ts`) is for the on-screen posting and Copy all. Do not run it on the text sent to create, duplicate detection, or re-extract.
+- Header status icons live in `frontend/src/img/` (not `img/reference/`). Sync dock (`SyncDock.vue`) is refresh+Excel logo for HTP→Excel dropdown sync; Dashboard Refresh is refresh-only (reload sessions list). Do not conflate the two.
+- FieldInput **Add…** only for `editable_option_columns` from `/meta` (Application_Status, Applied_Through, Found_From).
 - After a UI change, run `cd frontend && npx vue-tsc --noEmit`, then exercise the changed flow in the browser. Seed files through the API; the Cursor browser cannot pick files.
 - Dev UI is `npm run ui` (Vite, port 5180, `strictPort`, `/api` proxy to 127.0.0.1:8010). Do not add a second dev server or change that port.

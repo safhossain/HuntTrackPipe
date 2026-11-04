@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
-from ..columns import EDITABLE_OPTION_COLUMNS, editable_list_options
+from ..columns import EDITABLE_OPTION_COLUMNS, editable_list_options, list_validation_options
 from ..config import Settings
 from .tracker import Tracker, TrackerError, TrackerLocked
 
@@ -167,9 +167,8 @@ def compare_dropdowns(cfg: Settings, *, locked: bool, force: bool = False) -> Dr
 
 
 def sync_dropdowns_to_excel(cfg: Settings) -> DropdownSyncResult:
-    """Push HTP editable options into Excel list validations, then re-compare."""
-    options = editable_list_options(cfg)
+    """Push HTP list options (editable + code-owned) into Excel table-body DVs, then re-compare."""
     tracker = Tracker(cfg.tracker_abs, backups_keep=cfg.backups_keep)
-    tracker.sync_list_validations(options)
+    tracker.sync_list_validations(list_validation_options(cfg))
     dropdown_cache.clear()
     return compare_dropdowns(cfg, locked=False, force=True)

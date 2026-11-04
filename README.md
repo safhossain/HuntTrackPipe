@@ -58,7 +58,6 @@ CLI (no server; venv active, repo root):
 | `--no-jev` | skip Jev; the LLM extracts every field |
 | `--no-llm` | skip the LLM; only Jev's direct values (Work_Mode, Employment_Type) are used |
 | `--json` | machine-readable output |
-| `--confirmation` | Confirmation_# |
 | `--found-from` | Found_From (`HiringCafe`, `LinkedIn`, `Indeed`, `GCJobs`, `CRA`, `Other`) |
 | `--allow-duplicate` | create even if the posting matches an existing application (otherwise exit code 5) |
 | `-y` / `--yes` | skip the confirmation prompt |
@@ -75,24 +74,25 @@ Tests (venv active, repo root; never touches `JobHunting/`):
 - API keys in `.env` at the repo root: `TYPESAFE_API_KEY` and `ANTHROPIC_API_KEY`. Get the Jev key from `console.typesafe.ai` only; third-party "Jev" resellers exist.
 
 ### Configure
-Edit `htp.config.json` (non-secret settings: paths, candidate name, Jev thresholds, model IDs).
-Set `HTP_CONFIG=<path>` to use a different config file, e.g. to point at a scratch copy of the tracker.
+Edit `htp.config.json` (non-secret settings: paths, candidate name, Jev thresholds, model IDs, optional `options` for Application_Status / Applied_Through / Found_From).
+Set `HTP_CONFIG=<path>` to use a different config file, e.g. to point at a scratch copy of the tracker. Dropdown **Add…** in the UI also seeds/updates `options` and can sync Excel data validation (close the workbook first, or use the Sync dock after closing).
 
 For the Questions tab, write `JobHunting/candidate_context.txt` (git-ignored): a plain-text dump of your background, education, jobs and projects with concrete results, skills and tools, and what you are looking for. Answers are written only from facts in this file plus the posting, so the more specific it is the better. It is read fresh on every call; edit it any time.
 
 The tracker must contain a table named `Applications` with these headers (order does not matter):
-`Requisition_ID, Organization, Position_Title, Compensation, Work_Mode, Employment_Type, Deadline, Applied_Date, Posting_URL, Application_Status, Recruiter_Name, Recruiter_Contact, Outcome, Role_Categories, Position_Level, Days_Since_Applied, Applied_Through, Confirmation_#, Folder, Found_From`
+`Requisition_ID, Organization, Position_Title, Compensation, Work_Mode, Employment_Type, Deadline, Applied_Date, Posting_URL, Application_Status, Recruiter_Name, Recruiter_Contact, Outcome, Role_Category, Subrole_Categories, Position_Level, Days_Since_Applied, Applied_Through, Folder, Found_From, Location_Country, Location_City`
 
 **Close the workbook in Excel before running.** The engine refuses to write while Excel holds the file.
 
 ### Screens
-- **Dashboard** (`/`): every managed session with its row read back from Excel (status, outcome, applied date, days since, deadline), plus a list of unmanaged folders.
-- **New application** (`/new`): paste the posting, run Jev + Claude (either can be toggled off), review Jev's answers and the extracted fields, fill the manual fields (Applied_Date, Posting_URL, status, outcome, Applied_Through, Found_From, Confirmation_#), then create the folder + row. If the posting text or requisition ID matches an existing application a **Possible duplicate** banner links to it and Create asks for confirmation.
+- **Header (all pages):** small status icons (Excel / Jev / Claude) for tracker found|missing and API-key presence; amber banner when the tracker is open in Excel. Right-side **Sync dock**: refresh+Excel logo pushes HTP dropdown lists (`Application_Status`, `Applied_Through`, `Found_From`) into Excel data validation; expands for per-column diffs; blue = in sync, yellow = differs, grey = locked.
+- **Dashboard** (`/`): every managed session with its row read back from Excel (status, outcome, applied date, days since), unmanaged folders, metrics. Icon-only **Refresh** reloads the session list only (not dropdown sync).
+- **New application** (`/new`): paste the posting, run Jev + Claude (either can be toggled off), review Jev's answers and the extracted fields, fill the manual fields (Applied_Date, Posting_URL, status, outcome, Applied_Through, Found_From). Status / Applied Through / Found From dropdowns have **Add…** to grow the list in config + Excel. If the posting text or requisition ID matches an existing application a **Possible duplicate** banner links to it and Create asks for confirmation.
 - **Session** (`/sessions/{folder}`): Overview tab edits the tracker row (edited fields overwrite Excel, untouched fields never do); if Excel has the workbook open the write is kept as a pending write and a Retry button flushes it later. **Re-extract** runs Jev/Claude again on the stored posting and shows only the columns that differ from the tracker; tick the ones you want and Apply. Files and Questions tabs (below). Log tab shows raw Jev/LLM output of the latest run.
 - **Files tab**: drop files in (saved as `{count}_<name>.<ext>`), thumbnails, drag or ▲/▼ to reorder (renumbers on disk), pick a document type per file (guessed from the name), convert a file in place (PDF ⇄ DOCX, PDF → PNG/JPG, anything → PDF; the result is added as a new input), **Make final** → `{Candidate_Name}_{DocType}_{X}.<ext>`, **Combine → PDF** → `{Candidate_Name}_{X}.pdf` (non-PDF inputs are converted first, merged in display order). Files you drop into the folder by hand show up as *untracked* and can be adopted. Jev's upload-mode hint highlights the relevant button; you can override it.
 - **Questions tab**: paste application questions (one or several, each with an optional character/word limit), **Answer pending** answers them all in one Claude Haiku call written in first person from your candidate context + the posting; limits are checked in code and over-long answers are re-asked once. Edit answers by hand, **Regenerate…** one with feedback, Copy, reorder. `answers.md` in the application folder is kept up to date.
 - **Convert** (`/convert`): standalone converter, nothing is stored. PDF → PNG/JPG gives one image per page (zipped).
-- **Settings** (`/settings`): edit `htp.config.json` (paths, candidate name, Jev thresholds, models, DPI, backups) without restarting; shows whether the API keys, tracker and candidate context are present, and a live tail of the log.
+- **Settings** (`/settings`): edit `htp.config.json` (paths, candidate name, Jev thresholds, models, DPI, backups, optional `options` lists) without restarting; shows whether the API keys, tracker and candidate context are present, and a live tail of the log.
 
 Logs go to `JobHunting/Applications/.htp_logs/htp.log` (rotating, 2 MB x 5): every Jev/Claude call with token counts and timing, every tracker write with the columns written/skipped, lock and duplicate refusals, file operations. Posting text, candidate context and answers are never logged.
 

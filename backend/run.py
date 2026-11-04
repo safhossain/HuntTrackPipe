@@ -49,7 +49,6 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--status", choices=tuple(opts["Application_Status"]), help="Application_Status (default: Not Applied)")
     p.add_argument("--applied-through", choices=tuple(opts["Applied_Through"]), help="Applied_Through")
     p.add_argument("--found-from", choices=tuple(opts["Found_From"]), help="Found_From")
-    p.add_argument("--confirmation", help="Confirmation_#")
     p.add_argument("--no-jev", action="store_true", help="skip Jev; LLM extracts every field")
     p.add_argument("--no-llm", action="store_true", help="skip the LLM; only Jev direct values are used")
     p.add_argument("--dry-run", action="store_true", help="extract and print only; no folder, no Excel write")
@@ -110,7 +109,6 @@ def main(argv: list[str] | None = None) -> int:
         "Application_Status": a.status,
         "Applied_Through": a.applied_through,
         "Found_From": a.found_from,
-        "Confirmation_#": a.confirmation,
     }
     if not a.yes:
         ans = input("\nCreate application folder and write the Excel row? [y/N] ").strip().lower()

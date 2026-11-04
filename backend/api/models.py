@@ -104,6 +104,29 @@ class CreateSessionRequest(BaseModel):
     extraction: ExtractResponse
     manual: dict[str, Any] = Field(default_factory=dict)
     allow_duplicate: bool = False
+    compensation_estimated: bool = False
+
+
+class DuplicateSessionRequest(BaseModel):
+    """Optional tracker-column overrides applied before the new folder is named."""
+
+    values: dict[str, Any] = Field(default_factory=dict)
+
+
+class SessionFlagsRequest(BaseModel):
+    compensation_estimated: bool | None = None
+
+
+class SessionFlagsResponse(BaseModel):
+    compensation_estimated: bool
+
+
+class NotesRequest(BaseModel):
+    notes: str = ""
+
+
+class NotesResponse(BaseModel):
+    notes: str
 
 
 class SessionDetail(BaseModel):

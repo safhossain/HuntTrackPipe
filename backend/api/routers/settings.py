@@ -9,7 +9,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import ValidationError
 
-from ...columns import EDITABLE_OPTION_COLUMNS, editable_list_options, meta_payload, resolved_options
+from ...columns import EDITABLE_OPTION_COLUMNS, list_validation_options, meta_payload, resolved_options
 from ...config import CONFIG_PATH, Settings, settings
 from ...excel.dropdown_sync import dropdown_cache, sync_dropdowns_to_excel
 from ...excel.lock_watch import lock_watch
@@ -153,7 +153,7 @@ def add_option(column: str, req: AddOptionRequest) -> AddOptionResponse:
     excel_synced = True
     excel_error: str | None = None
     try:
-        Tracker(cfg.tracker_abs, backups_keep=cfg.backups_keep).sync_list_validations(editable_list_options(cfg))
+        Tracker(cfg.tracker_abs, backups_keep=cfg.backups_keep).sync_list_validations(list_validation_options(cfg))
         dropdown_cache.clear()
     except TrackerLocked as exc:
         excel_synced = False

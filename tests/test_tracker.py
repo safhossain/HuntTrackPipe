@@ -32,7 +32,7 @@ def test_first_write_uses_seed_row_and_defaults(tracker: Tracker):
     assert row["Application_Status"] == "Not Applied" and row["Outcome"] == "Pending"
     assert str(row["Days_Since_Applied"]).startswith("=IF(")
     assert row["Position_Title"] is None
-    assert _table_ref(tracker.path) == "A1:T2"
+    assert _table_ref(tracker.path) == "A1:V2"
     assert "Position_Title" not in rep.written
 
 
@@ -40,7 +40,7 @@ def test_second_folder_appends_and_extends_table(tracker: Tracker):
     tracker.write_row("F1", {"Organization": "Acme"})
     rep = tracker.write_row("F2", {"Organization": "Beta"})
     assert rep.row == 3 and rep.created
-    assert _table_ref(tracker.path) == "A1:T3"
+    assert _table_ref(tracker.path) == "A1:V3"
     assert [r["Folder"] for r in tracker.read_all()] == ["F1", "F2"]
     assert str(tracker.read_row("F2")["Days_Since_Applied"]).startswith("=IF(")
 
@@ -65,6 +65,32 @@ def test_fill_only_empty_then_force(tracker: Tracker):
 def test_unknown_column_is_an_error(tracker: Tracker):
     with pytest.raises(TrackerError):
         tracker.write_row("F1", {"Nope": 1})
+
+
+def test_ensure_columns_appends_headers(tmp_path: Path):
+    from openpyxl import Workbook
+    from openpyxl.worksheet.table import Table, TableStyleInfo
+
+    path = tmp_path / "slim.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Sheet1"
+    slim = ["Organization", "Folder", "Found_From"]
+    ws.append(slim)
+    ws.append(["Acme", "F1", None])
+    table = Table(displayName="Applications", ref="A1:C2")
+    table.tableStyleInfo = TableStyleInfo(name="TableStyleMedium2", showRowStripes=True)
+    ws.add_table(table)
+    wb.save(path)
+
+    t = Tracker(path, backups_keep=1)
+    assert t.ensure_columns(["Location_Country", "Location_City"]) == ["Location_Country", "Location_City"]
+    assert t.headers() == slim + ["Location_Country", "Location_City"]
+    assert _table_ref(path) == "A1:E2"
+    assert t.ensure_columns(["Location_Country", "Location_City"]) == []  # idempotent
+    t.write_row("F1", {"Location_Country": "Canada", "Location_City": "Toronto"})
+    row = t.read_row("F1")
+    assert row["Location_Country"] == "Canada" and row["Location_City"] == "Toronto"
 
 
 def test_backups_are_rotated(tracker: Tracker):
@@ -105,12 +131,23 @@ def test_sync_list_validations_by_header(tracker: Tracker):
     dvs = {str(dv.sqref): dv.formula1 for dv in wb.active.data_validations.dataValidation}
     assert any("Lever" in f for f in dvs.values())
     assert any("Referral" in f for f in dvs.values())
+    # Table body only (seed data row 2) — not whole-column to 1048576.
+    assert all("1048576" not in str(ref) for ref in dvs)
+    assert any(str(ref).endswith("2") for ref in dvs)
 
     # Reinforced on write_row in the same save.
     tracker.write_row("F1", {"Organization": "Acme"}, list_options={"Application_Status": ["Not Applied", "Offer-Stage"]})
     wb = load_workbook(tracker.path)
     formulas = [dv.formula1 for dv in wb.active.data_validations.dataValidation]
     assert any("Offer-Stage" in f for f in formulas)
+
+
+def test_clear_column_body(tracker: Tracker):
+    tracker.write_row("F1", {"Employment_Type": "Permanent Full-time"})
+    assert tracker.read_row("F1").get("Employment_Type") == "Permanent Full-time"
+    cleared = tracker.clear_column_body("Employment_Type")
+    assert cleared >= 1
+    assert tracker.read_row("F1").get("Employment_Type") in (None, "")
 
 
 def test_list_validation_rejects_comma_and_overlong(tracker: Tracker):

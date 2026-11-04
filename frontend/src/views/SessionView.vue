@@ -1,22 +1,27 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { api, type DiffEntry, type FilesView, type QAView, type ReextractResponse, type Row, type RowValue, type SessionDetail } from '../api/client'
 import FieldInput from '../components/FieldInput.vue'
 import FilesPanel from '../components/FilesPanel.vue'
 import JevPanel from '../components/JevPanel.vue'
 import QaPanel from '../components/QaPanel.vue'
 import { useAppStore } from '../stores/app'
-import { cleanPostingText, errorText, fmtDate } from '../utils'
+import { cleanPostingText, errorText, fmtDate, todayIso } from '../utils'
 
 const props = defineProps<{ folder: string }>()
 const app = useAppStore()
+const router = useRouter()
 
 const detail = ref<SessionDetail | null>(null)
 const loading = ref(false)
 const saving = ref(false)
-const tab = ref<'overview' | 'files' | 'questions' | 'log'>('overview')
+const tab = ref<'overview' | 'files' | 'questions' | 'notes' | 'log'>('overview')
 const showPosting = ref(false)
 const cleanedPosting = computed(() => cleanPostingText(detail.value?.session.posting.text ?? ''))
+const notesDraft = ref('')
+let notesTimer: ReturnType<typeof setTimeout> | null = null
+let notesSeq = 0
 
 const form = reactive<Row>({})
 const original = reactive<Row>({})
@@ -30,11 +35,34 @@ const folderPath = computed(() => {
 
 function hydrate(d: SessionDetail) {
   detail.value = d
+  notesDraft.value = d.session.notes ?? ''
   const src: Row = d.row ?? d.session.review.values
   for (const c of columns.value) {
     const v = src[c] ?? null
     original[c] = v === null ? null : app.meta?.date_columns.includes(c) ? fmtDate(v) : v
     form[c] = original[c]
+  }
+}
+
+function onNotesInput(ev: Event) {
+  notesDraft.value = (ev.target as HTMLTextAreaElement).value
+  if (notesTimer) clearTimeout(notesTimer)
+  notesTimer = setTimeout(() => {
+    void saveNotes()
+  }, 500)
+}
+
+async function saveNotes() {
+  if (!detail.value) return
+  const text = notesDraft.value
+  if (text === (detail.value.session.notes ?? '')) return
+  const seq = ++notesSeq
+  try {
+    const r = await api.setSessionNotes(props.folder, text)
+    if (seq !== notesSeq) return
+    detail.value.session.notes = r.notes
+  } catch (e) {
+    if (seq === notesSeq) app.toast(errorText(e), 'error')
   }
 }
 
@@ -85,6 +113,68 @@ async function retry() {
 
 function setField(c: string, v: RowValue) {
   form[c] = v
+}
+
+const compensationEstimated = computed(() => detail.value?.session.review.compensation_estimated ?? false)
+
+async function setCompensationEstimated(v: boolean) {
+  if (!detail.value) return
+  const prev = detail.value.session.review.compensation_estimated
+  detail.value.session.review.compensation_estimated = v
+  try {
+    const r = await api.setSessionFlags(props.folder, { compensation_estimated: v })
+    detail.value.session.review.compensation_estimated = r.compensation_estimated
+  } catch (e) {
+    detail.value.session.review.compensation_estimated = prev
+    app.toast(errorText(e), 'error')
+  }
+}
+
+// ---- duplicate ----
+/** Fields shown in the Duplicate panel; Requisition_ID first so a new req lands in the folder name. */
+const DUPLICATE_FIELDS = [
+  'Requisition_ID',
+  'Organization',
+  'Position_Title',
+  'Posting_URL',
+  'Applied_Date',
+  'Application_Status',
+  'Outcome',
+  'Applied_Through',
+  'Found_From',
+] as const
+const showDuplicate = ref(false)
+const duplicating = ref(false)
+const dupForm = reactive<Row>({})
+
+function openDuplicate() {
+  for (const c of DUPLICATE_FIELDS) {
+    if (c === 'Applied_Date') dupForm[c] = todayIso()
+    else if (c === 'Application_Status') dupForm[c] = 'Not Applied'
+    else if (c === 'Outcome') dupForm[c] = 'Pending'
+    else dupForm[c] = form[c] ?? null
+  }
+  showDuplicate.value = true
+}
+
+function setDupField(c: string, v: RowValue) {
+  dupForm[c] = v
+}
+
+async function confirmDuplicate() {
+  duplicating.value = true
+  try {
+    const values: Row = {}
+    for (const c of DUPLICATE_FIELDS) values[c] = dupForm[c] ?? null
+    const { session, report } = await api.duplicateSession(props.folder, values)
+    app.toast(`Duplicated as ${session.folder} (row ${report.row})`, 'success')
+    showDuplicate.value = false
+    router.push({ name: 'session', params: { folder: session.folder } })
+  } catch (e) {
+    app.toast(errorText(e), 'error', 10000)
+  } finally {
+    duplicating.value = false
+  }
 }
 
 // ---- re-extract ----
@@ -190,7 +280,24 @@ const pretty = (o: unknown) => JSON.stringify(o, null, 2)
           <span v-if="detail.session.review.written_at"> · last Excel write {{ detail.session.review.written_at.slice(0, 16).replace('T', ' ') }}</span>
         </p>
       </div>
-      <button class="btn-secondary" @click="copyPath" title="Copy folder path">Copy path</button>
+      <div class="flex flex-wrap gap-2">
+        <button class="btn-secondary" :disabled="duplicating || app.trackerLocked" :title="app.trackerLocked ? 'Close Excel first' : undefined" @click="openDuplicate">Duplicate…</button>
+        <button class="btn-secondary" @click="copyPath" title="Copy folder path">Copy path</button>
+      </div>
+    </div>
+
+    <div v-if="showDuplicate" class="card space-y-3 border-indigo-200">
+      <div class="flex items-baseline justify-between gap-2">
+        <h3 class="font-semibold">Duplicate application <span class="text-xs font-normal text-slate-500">(new folder dated today; edit identifying fields before create — folder name is fixed after)</span></h3>
+        <button type="button" class="text-sm text-slate-500 hover:text-slate-800" :disabled="duplicating" @click="showDuplicate = false">Cancel</button>
+      </div>
+      <p class="text-sm text-slate-600">Copies posting + Jev/LLM into a new session. Files and questions start empty. Change Requisition_ID (and anything else) here for a same-role / different-req listing.</p>
+      <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <FieldInput v-for="c in DUPLICATE_FIELDS" :key="c" :column="c" :model-value="dupForm[c] ?? null" @update:model-value="(v) => setDupField(c, v)" />
+      </div>
+      <div class="flex justify-end">
+        <button class="btn-primary" :disabled="duplicating || app.trackerLocked" @click="confirmDuplicate">{{ duplicating ? 'Creating…' : 'Create duplicate' }}</button>
+      </div>
     </div>
 
     <div v-if="detail.session.review.pending_write" class="flex items-center justify-between rounded-md bg-amber-50 p-3 text-sm text-amber-900">
@@ -201,7 +308,7 @@ const pretty = (o: unknown) => JSON.stringify(o, null, 2)
     <div v-else-if="!detail.row" class="rounded-md bg-amber-50 p-3 text-sm text-amber-900">No row in the tracker for this folder yet. Saving will create one.</div>
 
     <nav class="flex gap-1 border-b border-slate-200 text-sm">
-      <button v-for="t in (['overview', 'files', 'questions', 'log'] as const)" :key="t" class="-mb-px border-b-2 px-3 py-2 capitalize" :class="tab === t ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-slate-500 hover:text-slate-800'" @click="tab = t">{{ tabLabel(t) }}</button>
+      <button v-for="t in (['overview', 'files', 'questions', 'notes', 'log'] as const)" :key="t" class="-mb-px border-b-2 px-3 py-2 capitalize" :class="tab === t ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-slate-500 hover:text-slate-800'" @click="tab = t">{{ tabLabel(t) }}</button>
     </nav>
 
     <section v-if="tab === 'overview'" class="space-y-4">
@@ -211,7 +318,16 @@ const pretty = (o: unknown) => JSON.stringify(o, null, 2)
           <button class="btn-primary" :disabled="saving || !dirty.length || app.trackerLocked" :title="app.trackerLocked ? 'Close Excel first' : undefined" @click="save">{{ saving ? 'Saving…' : `Save ${dirty.length ? `(${dirty.length})` : ''}` }}</button>
         </div>
         <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          <FieldInput v-for="c in columns" :key="c" :column="c" :model-value="form[c] ?? null" :hint="dirty.includes(c) ? '• edited' : undefined" @update:model-value="(v) => setField(c, v)" />
+          <FieldInput
+            v-for="c in columns"
+            :key="c"
+            :column="c"
+            :model-value="form[c] ?? null"
+            :hint="dirty.includes(c) ? '• edited' : undefined"
+            :estimated="c === 'Compensation' ? compensationEstimated : undefined"
+            @update:model-value="(v) => setField(c, v)"
+            @update:estimated="setCompensationEstimated"
+          />
         </div>
       </div>
 
@@ -265,7 +381,17 @@ const pretty = (o: unknown) => JSON.stringify(o, null, 2)
       <QaPanel :folder="folder" @changed="onQaChanged" />
     </section>
 
-    <section v-else class="grid gap-4 lg:grid-cols-2">
+    <section v-else-if="tab === 'notes'">
+      <textarea
+        class="input min-h-[28rem] w-full resize-y font-normal"
+        :value="notesDraft"
+        placeholder=""
+        @input="onNotesInput"
+        @blur="saveNotes"
+      />
+    </section>
+
+    <section v-else-if="tab === 'log'" class="grid gap-4 lg:grid-cols-2">
       <JevPanel v-if="detail.session.jev" :jev="detail.session.jev" :derived="detail.session.jev.derived" :warnings="detail.session.jev.derived.warnings" />
       <div class="card space-y-2">
         <h3 class="font-semibold">LLM <span v-if="detail.session.llm" class="text-xs font-normal text-slate-500">{{ detail.session.llm.model }} · {{ pretty(detail.session.llm.usage) }}</span></h3>

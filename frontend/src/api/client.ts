@@ -294,11 +294,17 @@ export interface Session {
   posting: { text: string; url: string | null; hash: string | null }
   jev: JevRecord | null
   llm: LLMRecord | null
-  review: { values: Row; written_at: string | null; pending_write: { values: Row; force_columns: string[] } | null }
+  review: {
+    values: Row
+    written_at: string | null
+    pending_write: { values: Row; force_columns: string[] } | null
+    compensation_estimated: boolean
+  }
   upload_mode: string
   upload_mode_source: string
   files: Files
   qa: QA
+  notes: string
 }
 
 export interface SessionSummary {
@@ -339,8 +345,29 @@ export const api = {
     request<ExtractResponse>('/extract', { method: 'POST', body: JSON.stringify({ posting_text, use_jev, use_llm }) }),
   sessions: () => request<SessionListResponse>('/sessions'),
   session: (folder: string) => request<SessionDetail>(`/sessions/${encodeURIComponent(folder)}`),
-  createSession: (body: { posting_text: string; posting_url: string | null; extraction: ExtractResponse; manual: Row; allow_duplicate?: boolean }) =>
-    request<{ session: Session; report: WriteReport }>('/sessions', { method: 'POST', body: JSON.stringify(body) }),
+  createSession: (body: {
+    posting_text: string
+    posting_url: string | null
+    extraction: ExtractResponse
+    manual: Row
+    allow_duplicate?: boolean
+    compensation_estimated?: boolean
+  }) => request<{ session: Session; report: WriteReport }>('/sessions', { method: 'POST', body: JSON.stringify(body) }),
+  duplicateSession: (folder: string, values: Row = {}) =>
+    request<{ session: Session; report: WriteReport }>(`/sessions/${encodeURIComponent(folder)}/duplicate`, {
+      method: 'POST',
+      body: JSON.stringify({ values }),
+    }),
+  setSessionFlags: (folder: string, flags: { compensation_estimated?: boolean }) =>
+    request<{ compensation_estimated: boolean }>(`/sessions/${encodeURIComponent(folder)}/flags`, {
+      method: 'PUT',
+      body: JSON.stringify(flags),
+    }),
+  setSessionNotes: (folder: string, notes: string) =>
+    request<{ notes: string }>(`/sessions/${encodeURIComponent(folder)}/notes`, {
+      method: 'PUT',
+      body: JSON.stringify({ notes }),
+    }),
   reextract: (folder: string, use_jev: boolean, use_llm: boolean) =>
     request<ReextractResponse>(`/sessions/${encodeURIComponent(folder)}/reextract`, {
       method: 'POST',
@@ -372,6 +399,8 @@ export const api = {
   deleteInput: (folder: string, index: number) => request<FilesView>(`${filesPath(folder)}/${index}`, { method: 'DELETE' }),
   convertInput: (folder: string, index: number, target: string) =>
     request<FilesView>(`${filesPath(folder)}/${index}/convert`, { method: 'POST', body: JSON.stringify({ target }) }),
+  convertAllToPdf: (folder: string) =>
+    request<FilesView>(`${filesPath(folder)}/convert-all-pdf`, { method: 'POST' }),
   makeFinals: (folder: string, indices: number[] | null) =>
     request<FilesView>(`${filesPath(folder)}/final`, { method: 'POST', body: JSON.stringify({ indices }) }),
   combine: (folder: string, indices: number[] | null) =>
@@ -406,6 +435,11 @@ export const api = {
     form.append('file', file, file.name)
     form.append('target', target)
     return raw('/files/convert', { method: 'POST', body: form }, false)
+  },
+  convertAllFilesToPdf: async (files: File[]) => {
+    const form = new FormData()
+    for (const f of files) form.append('files', f, f.name)
+    return raw('/files/convert-all-pdf', { method: 'POST', body: form }, false)
   },
 }
 

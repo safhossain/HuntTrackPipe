@@ -5,7 +5,7 @@ import pytest
 
 from backend.duplicates import DuplicateError, find_duplicates, posting_hash
 from backend.excel.tracker import Tracker, TrackerLocked
-from backend.pipeline import create_application
+from backend.pipeline import create_application, duplicate_application
 from backend.sessions.store import POSTING_FILE, SESSION_FILE, SessionStore
 
 from .conftest import POSTING, sample_extraction
@@ -84,3 +84,28 @@ def test_all_null_folder_uses_timestamp(env):
     s, _ = create_application(env, posting_text="x", posting_url=None, extraction=ex, date_created=date(2026, 1, 2))
     parts = s.folder.split("_")
     assert parts[:4] == ["null", "null", "null", "2026-01-02"] and parts[4].isdigit()
+
+
+def test_duplicate_application_new_folder_and_req(env, session):
+    s2, rep = duplicate_application(
+        env,
+        session,
+        values={
+            "Requisition_ID": "JR-99999",
+            "Applied_Date": date(2026, 11, 2),
+            "Application_Status": "Not Applied",
+            "Outcome": "Pending",
+        },
+        date_created=date(2026, 11, 2),
+    )
+    assert s2.folder == "JR-99999_Acme-Corp_Senior-Backend-Engineer_2026-11-02"
+    assert s2.folder != session.folder
+    assert s2.posting.text == POSTING and s2.posting.hash == session.posting.hash
+    assert s2.posting.url == session.posting.url
+    assert s2.files.inputs == [] and s2.qa.questions == []
+    assert s2.jev == session.jev and s2.llm == session.llm
+    row = Tracker(env.tracker_abs).read_row(s2.folder)
+    assert row["Requisition_ID"] == "JR-99999"
+    assert row["Organization"] == "Acme Corp"
+    assert row["Application_Status"] == "Not Applied"
+    assert rep.created and rep.row == 3

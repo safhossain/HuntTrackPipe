@@ -37,17 +37,17 @@ DATE_FORMAT = "yyyy-mm-dd"
 BACKUP_DIR = ".htp_backup"
 # Excel inline list formula1 (contents inside the quotes) max length.
 EXCEL_LIST_MAX = 255
-WHOLE_COL_END = 1_048_576
 log = logging.getLogger("htp.tracker")
 
 
 def _dv_covers_column(dv: DataValidation, col_idx: int) -> bool:
+    """True if any sqref part includes ``col_idx`` (single-col or multi-col span)."""
     for part in str(dv.sqref or "").replace(",", " ").split():
         try:
             min_c, _min_r, max_c, _max_r = range_boundaries(part)
         except ValueError:
             continue
-        if min_c == col_idx and max_c == col_idx:
+        if min_c <= col_idx <= max_c:
             return True
     return False
 
@@ -64,8 +64,20 @@ def _list_formula(values: list[str]) -> str:
     return f'"{joined}"'
 
 
-def _apply_list_validations(ws: Worksheet, headers: dict[str, int], options_by_header: dict[str, list[str]]) -> list[str]:
-    """Replace whole-column list validations for the given headers. Returns columns touched."""
+def _apply_list_validations(
+    ws: Worksheet,
+    headers: dict[str, int],
+    options_by_header: dict[str, list[str]],
+    *,
+    body_first_row: int,
+    body_last_row: int,
+) -> list[str]:
+    """Replace list validations for the given headers over the table body only.
+
+    ``body_first_row`` / ``body_last_row`` are 1-based sheet rows (header excluded).
+    """
+    if body_last_row < body_first_row:
+        return []
     touched: list[str] = []
     dvs = ws.data_validations.dataValidation
     for name, values in options_by_header.items():
@@ -76,7 +88,7 @@ def _apply_list_validations(ws: Worksheet, headers: dict[str, int], options_by_h
         dvs[:] = remaining
         letter = get_column_letter(col)
         dv = DataValidation(type="list", formula1=_list_formula(values), allow_blank=True)
-        dv.add(f"{letter}2:{letter}{WHOLE_COL_END}")
+        dv.add(f"{letter}{body_first_row}:{letter}{body_last_row}")
         ws.add_data_validation(dv)
         touched.append(name)
     return touched
@@ -271,8 +283,35 @@ class Tracker:
         if table.autoFilter is not None:
             table.autoFilter.ref = ref
 
+    def ensure_columns(self, names: list[str]) -> list[str]:
+        """Append any missing header names to the right edge of the Applications table.
+
+        Returns the names that were newly added (empty when already present).
+        """
+        wanted = [n for n in names if n and n.strip()]
+        if not wanted:
+            return []
+        self.check_writable()
+        wb, ws, table = self._open()
+        headers = self._headers(ws, table)
+        missing = [n for n in wanted if n not in headers]
+        if not missing:
+            return []
+        min_col, min_row, max_col, max_row = self._bounds(table)
+        col = max_col
+        for name in missing:
+            col += 1
+            ws.cell(min_row, col).value = name
+        ref = f"{get_column_letter(min_col)}{min_row}:{get_column_letter(col)}{max_row}"
+        table.ref = ref
+        if table.autoFilter is not None:
+            table.autoFilter.ref = ref
+        self._save(wb)
+        log.info("added tracker columns: %s (table now %s)", missing, ref)
+        return missing
+
     def sync_list_validations(self, options_by_header: dict[str, list[str]]) -> list[str]:
-        """Rewrite whole-column list data-validations for ``options_by_header`` (by header name).
+        """Rewrite table-body list data-validations for ``options_by_header`` (by header name).
 
         Returns the column names that were updated. Raises ``TrackerLocked`` when
         Excel has the file open.
@@ -282,11 +321,86 @@ class Tracker:
         self.check_writable()
         wb, ws, table = self._open()
         headers = self._headers(ws, table)
-        touched = _apply_list_validations(ws, headers, options_by_header)
+        _min_c, min_row, _max_c, max_row = self._bounds(table)
+        touched = _apply_list_validations(
+            ws, headers, options_by_header, body_first_row=min_row + 1, body_last_row=max_row,
+        )
         if touched:
             self._save(wb)
-            log.info("synced list validations: %s", touched)
+            log.info("synced list validations (table body rows %d-%d): %s", min_row + 1, max_row, touched)
         return touched
+
+    def clear_column_body(self, column: str) -> int:
+        """Set every table-body cell in ``column`` to empty. Returns cleared count."""
+        if not column:
+            return 0
+        self.check_writable()
+        wb, ws, table = self._open()
+        headers = self._headers(ws, table)
+        if column not in headers:
+            raise TrackerError(f"Unknown tracker column: {column}. Headers: {list(headers)}")
+        _min_c, min_row, _max_c, max_row = self._bounds(table)
+        col = headers[column]
+        cleared = 0
+        for r in range(min_row + 1, max_row + 1):
+            cell = ws.cell(r, col)
+            if not _is_empty(cell.value):
+                cleared += 1
+            cell.value = None
+        self._save(wb)
+        log.info("cleared column %s body cells: %d non-empty of %d rows", column, cleared, max_row - min_row)
+        return cleared
+
+    def delete_columns(self, names: list[str]) -> list[str]:
+        """Delete named header columns from the Applications table (rightmost first).
+
+        Returns the names that were removed. Callers should re-sync list DVs afterwards.
+        """
+        wanted = [n for n in names if n and n.strip()]
+        if not wanted:
+            return []
+        self.check_writable()
+        wb, ws, table = self._open()
+        headers = self._headers(ws, table)
+        present = [n for n in wanted if n in headers]
+        if not present:
+            return []
+        min_col, min_row, max_col, max_row = self._bounds(table)
+        cols = sorted({headers[n] for n in present}, reverse=True)
+        for col in cols:
+            ws.delete_cols(col, 1)
+        new_max_col = max_col - len(cols)
+        if new_max_col < min_col:
+            raise TrackerError("Cannot delete the last remaining table column")
+        ref = f"{get_column_letter(min_col)}{min_row}:{get_column_letter(new_max_col)}{max_row}"
+        table.ref = ref
+        if table.autoFilter is not None:
+            table.autoFilter.ref = ref
+        # Drop any list DV that still points at removed columns (best-effort cleanup).
+        dvs = ws.data_validations.dataValidation
+        keep = []
+        for dv in dvs:
+            if any(_dv_covers_column(dv, c) for c in cols):
+                continue
+            keep.append(dv)
+        dvs[:] = keep
+        # openpyxl delete_cols leaves hyperlink refs at absolute cells; rebuild Folder links.
+        if hasattr(ws, "_hyperlinks"):
+            ws._hyperlinks.clear()
+        headers_after = self._headers(ws, table)
+        if FOLDER_COL in headers_after:
+            fcol = headers_after[FOLDER_COL]
+            for r in range(min_row + 1, max_row + 1):
+                cell = ws.cell(r, fcol)
+                if cell.hyperlink is not None:
+                    cell.hyperlink = None
+                name = cell.value
+                if name:
+                    cell.value = str(name).rstrip("/")
+                    cell.hyperlink = f"{cell.value}/"
+        self._save(wb)
+        log.info("deleted tracker columns: %s (table now %s)", present, ref)
+        return present
 
     def write_row(
         self,
@@ -299,7 +413,7 @@ class Tracker:
     ) -> WriteReport:
         """Write ``values`` ({column: value}) to the row for ``folder``.
 
-        When ``list_options`` is set, whole-column list validations for those
+        When ``list_options`` is set, table-body list validations for those
         headers are refreshed in the same save (heals a prior locked eager sync).
 
         Returns what was written and what was skipped. Raises ``TrackerLocked``
@@ -352,7 +466,10 @@ class Tracker:
                 ws.cell(row, headers[column]).value = formula
 
         if list_options:
-            _apply_list_validations(ws, headers, list_options)
+            _min_c, min_row, _max_c, max_row = self._bounds(table)
+            _apply_list_validations(
+                ws, headers, list_options, body_first_row=min_row + 1, body_last_row=max_row,
+            )
 
         self._save(wb)
         log.info(

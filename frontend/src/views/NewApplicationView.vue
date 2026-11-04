@@ -5,7 +5,7 @@ import { ApiError, api, type DuplicateHit, type ExtractResponse, type Row, type 
 import FieldInput from '../components/FieldInput.vue'
 import JevPanel from '../components/JevPanel.vue'
 import { useAppStore } from '../stores/app'
-import { cleanPostingText, errorText } from '../utils'
+import { cleanPostingText, errorText, todayIso } from '../utils'
 
 const app = useAppStore()
 const router = useRouter()
@@ -20,7 +20,12 @@ const creating = ref(false)
 const result = ref<ExtractResponse | null>(null)
 const duplicates = ref<DuplicateHit[]>([])
 const values = reactive<Row>({})
-const manual = reactive<Row>({ Application_Status: 'Not Applied', Outcome: 'Pending' })
+const manual = reactive<Row>({
+  Applied_Date: todayIso(),
+  Application_Status: 'Not Applied',
+  Outcome: 'Pending',
+})
+const compensationEstimated = ref(false)
 
 const extractedCols = computed(() => app.meta?.extracted_columns ?? [])
 const manualCols = computed(() => app.meta?.manual_columns ?? [])
@@ -37,6 +42,10 @@ async function copyPosting() {
 
 function setRow(target: Row, col: string, v: RowValue) {
   target[col] = v
+}
+
+function setCompensationEstimated(v: boolean) {
+  compensationEstimated.value = v
 }
 
 async function runExtract() {
@@ -72,6 +81,7 @@ async function create(allowDuplicate = false) {
       extraction: { ...result.value, values: { ...values } },
       manual: { ...manual },
       allow_duplicate: allowDuplicate,
+      compensation_estimated: compensationEstimated.value,
     })
     app.toast(`Created ${session.folder} (row ${report.row})`, 'success')
     const skipped = Object.keys(report.skipped)
@@ -143,7 +153,16 @@ const hintFor = (col: string) => {
             <span v-if="result.llm" class="text-xs text-slate-500">{{ result.llm.model }} · {{ (result.llm.usage as any)?.input_tokens }} in / {{ (result.llm.usage as any)?.output_tokens }} out</span>
           </div>
           <div class="grid gap-3 sm:grid-cols-2">
-            <FieldInput v-for="c in extractedCols" :key="c" :column="c" :model-value="values[c] ?? null" :hint="hintFor(c)" @update:model-value="(v) => setRow(values, c, v)" />
+            <FieldInput
+              v-for="c in extractedCols"
+              :key="c"
+              :column="c"
+              :model-value="values[c] ?? null"
+              :hint="hintFor(c)"
+              :estimated="c === 'Compensation' ? compensationEstimated : undefined"
+              @update:model-value="(v) => setRow(values, c, v)"
+              @update:estimated="setCompensationEstimated"
+            />
           </div>
         </div>
 

@@ -27,17 +27,33 @@ const questions = computed(() => view.value?.qa.questions ?? [])
 const pending = computed(() => questions.value.filter((q) => q.status === 'pending'))
 const dirtyAnswers = computed(() => questions.value.filter((q) => (drafts[q.id] ?? q.answer ?? '') !== (q.answer ?? '')))
 
-function apply(v: QAView) {
+/** Merge server QA into local state. Only overwrite answer drafts listed in
+ * ``overwriteDraftIds`` (or all on first load). Unsaved typing in other
+ * question boxes is preserved across Save / Answer / Regenerate. */
+function apply(v: QAView, overwriteDraftIds: string[] | 'all' = 'all') {
+  const prevAnswers = Object.fromEntries((view.value?.qa.questions ?? []).map((q) => [q.id, q.answer ?? '']))
   view.value = v
-  for (const q of v.qa.questions) drafts[q.id] = q.answer ?? '' // server state wins after every mutation
+  const keep = new Set(v.qa.questions.map((q) => q.id))
+  for (const id of Object.keys(drafts)) {
+    if (!keep.has(id)) delete drafts[id]
+  }
+  for (const q of v.qa.questions) {
+    const server = q.answer ?? ''
+    const prevServer = prevAnswers[q.id] ?? ''
+    const force = overwriteDraftIds === 'all' || overwriteDraftIds.includes(q.id)
+    const dirty = drafts[q.id] !== undefined && drafts[q.id] !== prevServer
+    if (force || drafts[q.id] === undefined || !dirty) {
+      drafts[q.id] = server
+    }
+  }
   emit('changed', v)
   for (const w of v.warnings) app.toast(w, 'info', 8000)
 }
 
-async function run(label: string, fn: () => Promise<QAView>, okMsg?: string) {
+async function run(label: string, fn: () => Promise<QAView>, okMsg?: string, overwriteDraftIds: string[] | 'all' = []) {
   busy.value = label
   try {
-    apply(await fn())
+    apply(await fn(), overwriteDraftIds)
     if (okMsg) app.toast(okMsg, 'success', 3000)
   } catch (e) {
     app.toast(errorText(e), 'error', 12000)
@@ -48,7 +64,7 @@ async function run(label: string, fn: () => Promise<QAView>, okMsg?: string) {
 
 onMounted(async () => {
   try {
-    apply(await api.qa(props.folder))
+    apply(await api.qa(props.folder), 'all')
   } catch (e) {
     app.toast(errorText(e), 'error')
   }
@@ -62,7 +78,7 @@ async function add() {
   const lines = onePerLine.value ? newText.value.split(/\r?\n/) : [newText.value]
   const items = lines.map((t) => t.trim()).filter(Boolean).map((text) => ({ text, limit: limitFrom(newLimitUnit.value, newLimitValue.value) }))
   if (!items.length) return
-  await run('add', () => api.addQuestions(props.folder, items), `Added ${items.length} question(s)`)
+  await run('add', () => api.addQuestions(props.folder, items), `Added ${items.length} question(s)`, [])
   newText.value = ''
 }
 
@@ -73,20 +89,24 @@ async function saveEdit(q: Question) {
   const e = editing[q.id]
   if (!e) return
   const limit = limitFrom(e.unit, e.value)
-  await run(`edit-${q.id}`, () => api.updateQuestion(props.folder, q.id, { text: e.text, limit, clear_limit: !limit }))
+  await run(`edit-${q.id}`, () => api.updateQuestion(props.folder, q.id, { text: e.text, limit, clear_limit: !limit }), undefined, [])
   delete editing[q.id]
 }
 const cancelEdit = (q: Question) => delete editing[q.id]
 
-const saveAnswer = (q: Question) => run(`answer-${q.id}`, () => api.updateQuestion(props.folder, q.id, { answer: drafts[q.id] ?? '' }), 'Answer saved')
+const saveAnswer = (q: Question) =>
+  run(`answer-${q.id}`, () => api.updateQuestion(props.folder, q.id, { answer: drafts[q.id] ?? '' }), 'Answer saved', [q.id])
 const remove = (q: Question) => {
   if (!confirm(`Delete this question?\n\n${q.text}`)) return
-  return run(`del-${q.id}`, () => api.deleteQuestion(props.folder, q.id))
+  return run(`del-${q.id}`, () => api.deleteQuestion(props.folder, q.id), undefined, [])
 }
-const answerPending = () => run('answer', () => api.answerQuestions(props.folder, null), `Answered ${pending.value.length} question(s)`)
-const answerOne = (q: Question) => run(`gen-${q.id}`, () => api.answerQuestions(props.folder, [q.id]))
+const answerPending = () => {
+  const ids = pending.value.map((q) => q.id)
+  return run('answer', () => api.answerQuestions(props.folder, null), `Answered ${ids.length} question(s)`, ids)
+}
+const answerOne = (q: Question) => run(`gen-${q.id}`, () => api.answerQuestions(props.folder, [q.id]), undefined, [q.id])
 const regenerate = (q: Question) =>
-  run(`gen-${q.id}`, () => api.regenerate(props.folder, q.id, (feedback[q.id] ?? '').trim() || null), 'Regenerated').then(() => {
+  run(`gen-${q.id}`, () => api.regenerate(props.folder, q.id, (feedback[q.id] ?? '').trim() || null), 'Regenerated', [q.id]).then(() => {
     showFeedback[q.id] = false
   })
 
@@ -95,7 +115,7 @@ async function move(i: number, dir: -1 | 1) {
   const j = i + dir
   if (j < 0 || j >= order.length) return
   ;[order[i], order[j]] = [order[j]!, order[i]!]
-  await run('order', () => api.reorderQuestions(props.folder, order))
+  await run('order', () => api.reorderQuestions(props.folder, order), undefined, [])
 }
 
 async function copy(text: string) {

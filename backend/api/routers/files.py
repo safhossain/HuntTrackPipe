@@ -182,6 +182,14 @@ def convert_input(folder: str, index: int, req: ConvertRequest) -> FilesView:
     return _save_view(session, fm)
 
 
+@router.post(f"{S}/convert-all-pdf", response_model=FilesView)
+def convert_all_to_pdf(folder: str) -> FilesView:
+    """Convert every non-PDF input to PDF (results appended as new inputs)."""
+    session, fm = _load(folder), _manager()
+    fm.convert_all_to_pdf(session)
+    return _save_view(session, fm)
+
+
 # -- standalone converter -------------------------------------------------------------
 
 
@@ -214,3 +222,72 @@ async def convert_standalone(file: UploadFile = File(...), target: str = Form(..
         for o in outs:
             zf.write(o, o.name)
     return FileResponse(zpath, filename=zpath.name, media_type="application/zip", background=cleanup)
+
+
+@router.post("/files/convert-all-pdf")
+async def convert_all_pdf_standalone(files: list[UploadFile] = File(...)):
+    """Convert one or more uploads to PDF. Already-PDF files are passed through.
+    Returns a single PDF, or a zip when there is more than one output.
+    """
+    if not files:
+        raise HTTPException(400, "No files uploaded")
+    tmp = Path(tempfile.mkdtemp(prefix="htp_conv_all_"))
+    cleanup = BackgroundTask(shutil.rmtree, tmp, True)
+    outs: list[Path] = []
+    used_names: set[str] = set()
+    try:
+        cfg = get_settings().files
+        in_dir = tmp / "in"
+        out_dir = tmp / "out"
+        in_dir.mkdir()
+        out_dir.mkdir()
+        for i, up in enumerate(files):
+            data = await up.read()
+            if not data:
+                raise HTTPException(400, f"{up.filename or f'file {i}'} is empty")
+            if len(data) > MAX_UPLOAD_BYTES:
+                raise HTTPException(413, f"{up.filename} exceeds {MAX_UPLOAD_BYTES // (1024 * 1024)} MB")
+            raw_name = Path(up.filename or f"file_{i}").name or f"file_{i}"
+            src = in_dir / f"{i}_{raw_name}"
+            src.write_bytes(data)
+            if cv.ext_of(src) == cv.PDF_EXT:
+                # Pass through; rename to the original stem for the download.
+                dest_name = _unique_zip_name(Path(raw_name).stem + ".pdf", used_names)
+                dest = out_dir / dest_name
+                shutil.copy2(src, dest)
+                outs.append(dest)
+            else:
+                converted = cv.convert(src, "pdf", out_dir / f"c{i}", cfg)
+                for o in converted:
+                    dest_name = _unique_zip_name(Path(raw_name).stem + ".pdf", used_names)
+                    dest = out_dir / dest_name
+                    if o != dest:
+                        shutil.move(str(o), dest)
+                    outs.append(dest)
+    except HTTPException:
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise
+    except Exception:
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise
+    if len(outs) == 1:
+        return FileResponse(outs[0], filename=outs[0].name, background=cleanup)
+    zpath = tmp / "converted_pdfs.zip"
+    with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as zf:
+        for o in outs:
+            zf.write(o, o.name)
+    return FileResponse(zpath, filename=zpath.name, media_type="application/zip", background=cleanup)
+
+
+def _unique_zip_name(name: str, used: set[str]) -> str:
+    if name.lower() not in used:
+        used.add(name.lower())
+        return name
+    stem, suf = Path(name).stem, Path(name).suffix
+    n = 2
+    while True:
+        candidate = f"{stem}_{n}{suf}"
+        if candidate.lower() not in used:
+            used.add(candidate.lower())
+            return candidate
+        n += 1

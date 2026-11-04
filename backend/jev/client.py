@@ -46,9 +46,17 @@ class JevClient:
         self.cfg = cfg
         self.key = key or api_key("TYPESAFE_API_KEY")
 
-    def ask(self, posting_text: str, questions: dict[str, dict]) -> JevResponse:
+    def ask(
+        self,
+        posting_text: str,
+        questions: dict[str, dict],
+        *,
+        state: dict[str, Any] | None = None,
+    ) -> JevResponse:
         text, warning = truncate_for_jev(posting_text)
-        body = {"model": self.cfg.model, "state": {"posting": text}, "questions": questions}
+        payload = dict(state) if state is not None else {}
+        payload["posting"] = text  # always truncated; other state keys (e.g. subroles) kept
+        body = {"model": self.cfg.model, "state": payload, "questions": questions}
         headers = {"Authorization": f"Bearer {self.key}", "Content-Type": "application/json"}
         url = f"{self.cfg.base_url.rstrip('/')}/v1/systemone"
 

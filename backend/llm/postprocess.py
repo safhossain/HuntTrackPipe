@@ -39,7 +39,7 @@ def row_values(derived: JevDerived, llm_output: dict[str, Any]) -> dict[str, Any
         if fld not in llm_output:
             continue
         raw = llm_output[fld]
-        if fld == "role_categories":
+        if fld == "subrole_categories":
             cats = [c for c in (_clean_str(x) for x in (raw or [])) if c][:MAX_ROLE_CATEGORIES]
             out[column] = ", ".join(cats) if cats else None
         elif fld == "deadline":

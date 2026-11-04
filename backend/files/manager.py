@@ -192,6 +192,21 @@ class FileManager:
         shutil.rmtree(with_tmp, ignore_errors=True)
         return added
 
+    def convert_all_to_pdf(self, session: Session) -> list[InputFile]:
+        """Convert every non-PDF input to PDF; each result is appended as a new input.
+
+        Original indices stay valid because new files are only appended. Already-PDF
+        inputs are skipped. Raises FileError when there is nothing to convert.
+        """
+        indices = [i.index for i in session.files.inputs if cv.ext_of(i.file) != cv.PDF_EXT]
+        if not indices:
+            raise FileError("No non-PDF inputs to convert")
+        added: list[InputFile] = []
+        for index in indices:
+            added.extend(self.convert_input(session, index, "pdf"))
+        log.info("%s: convert-all-pdf %d source(s) -> %d file(s)", session.folder, len(indices), len(added))
+        return added
+
     # -- finals -------------------------------------------------------------------
     def make_final(self, session: Session, index: int, x: str) -> FinalFile:
         item = self._input(session, index)

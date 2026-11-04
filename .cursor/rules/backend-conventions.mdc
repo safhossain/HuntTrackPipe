@@ -26,9 +26,12 @@ alwaysApply: false
 - Every schema property is required + nullable; `additionalProperties: false`. Fields are ordered like Excel columns.
 - Pricing jumps 5x above 100k input tokens; `token_warn` (80k) guards it.
 
-## Excel (`backend/excel/tracker.py`)
+## Excel (`backend/excel/`)
 - Locate columns by header name in table `Applications`, never by letter.
 - Default is fill-only-empty; overwriting requires `force_columns`.
 - Dates are written as `datetime` with `yyyy-mm-dd` format. New rows get the Days_Since_Applied structured-reference formula and a relative `Folder` hyperlink.
 - Call `check_writable()` before creating anything on disk, so a locked tracker leaves no orphan folder.
 - openpyxl drops charts/images on save; the tracker has neither. Re-verify if that changes.
+- List DVs are **table-body only** (not whole-column). Sync by header via `sync_list_validations` / `read_list_options` using `list_validation_options()` (editable + code-owned). `parse_list_formula` must strip items (Excel often stores `", "`). `_dv_covers_column` treats multi-col spans as covering each included column.
+- Lock state: watch `~$` owner file (`lock_watch.py`); do not poll `load_workbook` while locked. Drift compare only when unlocked (`dropdown_sync.py`).
+- Do not rewrite `columns.py` from the API for new dropdown values — persist under `Settings.options` in `htp.config.json`.

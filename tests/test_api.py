@@ -15,7 +15,7 @@ from backend.pipeline import Extraction
 from backend.sessions.models import JevDerived, JevRecord, LLMRecord
 
 from .conftest import POSTING, sample_extraction
-from .test_files import pdf_bytes
+from .test_files import pdf_bytes, png_bytes
 
 
 @pytest.fixture
@@ -80,12 +80,32 @@ def test_create_duplicate_and_reextract_flow(client, env, monkeypatch):
     r = client.post("/api/sessions", json={**_payload(client), "allow_duplicate": True})
     assert r.status_code == 200 and r.json()["session"]["folder"] == folder + "_2"
 
+    # Explicit duplicate endpoint: new req id + today's date in the folder name.
+    r = client.post(
+        f"/api/sessions/{folder}/duplicate",
+        json={"values": {"Requisition_ID": "JR-99999", "Applied_Date": "2026-11-02", "Application_Status": "Not Applied", "Outcome": "Pending"}},
+    )
+    assert r.status_code == 200, r.text
+    dup_folder = r.json()["session"]["folder"]
+    assert dup_folder.startswith("JR-99999_Acme-Corp_") and dup_folder != folder
+    assert r.json()["session"]["posting"]["hash"] == body["session"]["posting"]["hash"]
+    assert r.json()["session"]["files"]["inputs"] == []
+    assert r.json()["report"]["created"] is True
+
     lst = client.get("/api/sessions").json()
-    assert [s["folder"] for s in lst["sessions"]] == [folder, folder + "_2"]
-    assert lst["sessions"][0]["row"]["Applied_Date"] == "2026-10-11"
+    folders = [s["folder"] for s in lst["sessions"]]
+    assert folder in folders and folder + "_2" in folders and dup_folder in folders
+    assert next(s["row"]["Applied_Date"] for s in lst["sessions"] if s["folder"] == folder) == "2026-10-11"
 
     detail = client.get(f"/api/sessions/{folder}").json()
     assert detail["row"]["Organization"] == "Acme Corp" and detail["row_error"] is None
+    assert detail["session"]["review"]["compensation_estimated"] is False
+    fr = client.put(f"/api/sessions/{folder}/flags", json={"compensation_estimated": True})
+    assert fr.status_code == 200 and fr.json()["compensation_estimated"] is True
+    assert client.get(f"/api/sessions/{folder}").json()["session"]["review"]["compensation_estimated"] is True
+    nr = client.put(f"/api/sessions/{folder}/notes", json={"notes": "follow up Tuesday"})
+    assert nr.status_code == 200 and nr.json()["notes"] == "follow up Tuesday"
+    assert client.get(f"/api/sessions/{folder}").json()["session"]["notes"] == "follow up Tuesday"
     assert client.get("/api/sessions/nope").status_code == 404
 
     # Re-extract: diff against the Excel row; nothing written yet.
@@ -146,7 +166,23 @@ def test_files_endpoints(client, env, monkeypatch):
     assert client.get(f"{base}/download/..%5Csession.json").status_code in (400, 404)
     assert client.put(f"{base}/upload-mode", json={"upload_mode": "single_combined_file"}).json()["upload_mode_source"] == "user"
     assert client.delete(f"{base}/1").json()["files"]["inputs"].__len__() == 1
+    # convert-all-pdf: only PDFs left -> 400; with a PNG it appends a new PDF
+    assert client.post(f"{base}/convert-all-pdf").status_code == 400
+    assert client.post(base, files=[("files", ("shot.png", png_bytes(), "image/png"))]).status_code == 200
+    r = client.post(f"{base}/convert-all-pdf")
+    assert r.status_code == 200, r.text
+    names = [i["file"] for i in r.json()["files"]["inputs"]]
+    assert any(n.endswith(".pdf") and "shot" in n.lower() for n in names)
     assert client.get("/api/files/tools").status_code == 200
+    # standalone multi → PDF
+    r = client.post(
+        "/api/files/convert-all-pdf",
+        files=[
+            ("files", ("a.png", png_bytes(), "image/png")),
+            ("files", ("b.pdf", pdf_bytes(1, "b"), "application/pdf")),
+        ],
+    )
+    assert r.status_code == 200 and "zip" in (r.headers.get("content-type") or "")
 
 
 def test_qa_endpoints(client, env, monkeypatch):

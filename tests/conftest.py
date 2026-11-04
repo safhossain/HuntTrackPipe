@@ -33,8 +33,8 @@ from backend.sessions.models import JevDerived  # noqa: E402
 HEADERS = [
     "Requisition_ID", "Organization", "Position_Title", "Compensation", "Work_Mode", "Employment_Type",
     "Deadline", "Applied_Date", "Posting_URL", "Application_Status", "Recruiter_Name", "Recruiter_Contact",
-    "Outcome", "Role_Categories", "Position_Level", "Days_Since_Applied", "Applied_Through", "Confirmation_#",
-    "Folder", "Found_From",
+    "Outcome", "Role_Category", "Subrole_Categories", "Position_Level", "Days_Since_Applied", "Applied_Through",
+    "Folder", "Found_From", "Location_Country", "Location_City",
 ]
 POSTING = """Senior Backend Engineer - Acme Corp
 Req ID: R-12345
@@ -46,14 +46,14 @@ Please upload a resume and a cover letter as separate files.
 
 
 def make_tracker(path: Path) -> Path:
-    """Minimal clone of the real tracker: 20 headers, table ``Applications`` over A1:T2,
+    """Minimal clone of the real tracker: 22 headers, table ``Applications`` over A1:V2,
     one empty seed row carrying the Days_Since_Applied formula."""
     wb = Workbook()
     ws = wb.active
     ws.title = "Sheet1"
     ws.append(HEADERS)
     ws.cell(2, HEADERS.index("Days_Since_Applied") + 1).value = FORMULA_COLS["Days_Since_Applied"]
-    table = Table(displayName="Applications", ref="A1:T2")
+    table = Table(displayName="Applications", ref="A1:V2")
     table.tableStyleInfo = TableStyleInfo(name="TableStyleMedium2", showRowStripes=True)
     ws.add_table(table)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -95,11 +95,12 @@ def sample_extraction(**overrides) -> Extraction:
         "Position_Title": "Senior Backend Engineer",
         "Compensation": "CAD 140,000-160,000 / year",
         "Work_Mode": "Remote",
-        "Employment_Type": "Full-time",
+        "Employment_Type": "Permanent Full-time",
         "Deadline": date(2026, 12, 1),
         "Recruiter_Name": "Jane Doe",
         "Recruiter_Contact": "jane.doe@acme.example",
-        "Role_Categories": "Backend, Cloud",
+        "Role_Category": "Backend",
+        "Subrole_Categories": "Backend, Cloud",
         "Position_Level": "Senior",
     }
     values.update(overrides)

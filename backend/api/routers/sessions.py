@@ -6,21 +6,26 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
-from ...columns import EXTRACTED_COLUMNS, editable_list_options
+from ...columns import EXTRACTED_COLUMNS, list_validation_options
 from ...excel.tracker import TrackerError, TrackerLocked
-from ...pipeline import Extraction, create_application, extract
+from ...pipeline import Extraction, create_application, duplicate_application, extract
 from ...sessions.models import utc_now
 from ..deps import coerce_row_values, get_settings, get_store, get_tracker, report_model
 from ..models import (
     CreateSessionRequest,
     CreateSessionResponse,
     DiffEntry,
+    DuplicateSessionRequest,
     ExtractResponse,
     ReextractRequest,
     ReextractResponse,
     RowWriteRequest,
     RowWriteResponse,
     SessionDetail,
+    NotesRequest,
+    NotesResponse,
+    SessionFlagsRequest,
+    SessionFlagsResponse,
     SessionListResponse,
     SessionSummary,
 )
@@ -74,6 +79,7 @@ def create_session(req: CreateSessionRequest) -> CreateSessionResponse:
         extraction=ex,
         manual=coerce_row_values(req.manual),
         allow_duplicate=req.allow_duplicate,
+        compensation_estimated=req.compensation_estimated,
     )
     return CreateSessionResponse(session=session, report=report_model(report))
 
@@ -97,6 +103,41 @@ def get_session(folder: str) -> SessionDetail:
     return SessionDetail(session=session, row=row, row_error=err)
 
 
+@router.post("/{folder}/duplicate", response_model=CreateSessionResponse)
+def duplicate_session(folder: str, req: DuplicateSessionRequest) -> CreateSessionResponse:
+    """Clone this application into a new folder dated today.
+
+    Copies posting + Jev/LLM; files and Q&A start empty. Pass ``values`` to
+    change identifying fields (e.g. Requisition_ID) before the folder is named.
+    """
+    _, source = _load_or_404(folder)
+    session, report = duplicate_application(
+        get_settings(),
+        source,
+        values=coerce_row_values(req.values),
+    )
+    return CreateSessionResponse(session=session, report=report_model(report))
+
+
+@router.put("/{folder}/flags", response_model=SessionFlagsResponse)
+def put_session_flags(folder: str, req: SessionFlagsRequest) -> SessionFlagsResponse:
+    """Persist UI-only session flags (not Excel columns), e.g. Compensation Estimated."""
+    store, session = _load_or_404(folder)
+    if req.compensation_estimated is not None:
+        session.review.compensation_estimated = req.compensation_estimated
+    store.save(session)
+    return SessionFlagsResponse(compensation_estimated=session.review.compensation_estimated)
+
+
+@router.put("/{folder}/notes", response_model=NotesResponse)
+def put_session_notes(folder: str, req: NotesRequest) -> NotesResponse:
+    """Free-text Notes tab body (session.json only)."""
+    store, session = _load_or_404(folder)
+    session.notes = req.notes
+    store.save(session)
+    return NotesResponse(notes=session.notes)
+
+
 @router.put("/{folder}/row", response_model=RowWriteResponse)
 def write_row(folder: str, req: RowWriteRequest) -> RowWriteResponse:
     """Write edited cells. Columns in ``force_columns`` overwrite existing values;
@@ -104,7 +145,7 @@ def write_row(folder: str, req: RowWriteRequest) -> RowWriteResponse:
     store, session = _load_or_404(folder)
     values = coerce_row_values(req.values)
     tracker = get_tracker()
-    lists = editable_list_options(get_settings())
+    lists = list_validation_options(get_settings())
     try:
         report = tracker.write_row(folder, values, force_columns=set(req.force_columns), list_options=lists)
     except TrackerLocked:
@@ -185,7 +226,7 @@ def retry_pending(folder: str) -> RowWriteResponse:
         folder,
         values,
         force_columns=set(pending.get("force_columns", [])),
-        list_options=editable_list_options(get_settings()),
+        list_options=list_validation_options(get_settings()),
     )
     session.review.values.update({k: v for k, v in values.items() if v is not None})
     session.review.pending_write = None

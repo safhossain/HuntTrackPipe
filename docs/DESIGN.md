@@ -36,7 +36,7 @@ HuntTrackPipe/
     main.py                 # FastAPI app + routers + error handlers + logging start-up
     config.py               # loads htp.config.json + .env; Settings model
     naming.py               # sanitize(), folder_name(), final_file_name()
-    columns.py              # tracker column registry + dropdown options
+    columns.py              # column registry; DEFAULT_OPTIONS + resolved_options() / meta_payload()
     pipeline.py             # extract() + create_application(); shared by CLI and API
     duplicates.py           # posting hash + find_duplicates(); DuplicateError (409)
     logs.py                 # console + rotating file log under Applications/.htp_logs/
@@ -49,7 +49,10 @@ HuntTrackPipe/
       schema_builder.py     # Jev-derived field list -> strict JSON schema
       prompts.py            # extraction + QA system prompts
     excel/
-      tracker.py            # open/locate table, find/append row, write, formula, hyperlink, backup, lock check
+      tracker.py            # open/locate table, find/append row, write, formula, hyperlink, backup, lock check, list DV sync/read
+      lock_watch.py         # ~$ owner-file watcher (sigON/sigOFF) + exists() probe
+      dropdown_sync.py      # HTP options vs Excel list DV compare + push sync
+      status.py             # assemble tracker lock + dropdown_sync for the API
     sessions/
       models.py             # Pydantic models for session.json
       store.py              # create/load/save session.json per application folder
@@ -104,7 +107,8 @@ Applications/
                         "required_docs": ["CoverLetter"] } },
   "llm": { "model": "claude-haiku-5-5", "at": "...", "schema": {}, "output": {}, "usage": {} },
   "review": { "values": { "Requisition_ID": "1234567890", "...": "..." },
-              "written_at": null, "pending_write": null },
+              "written_at": null, "pending_write": null,
+              "compensation_estimated": false },
   "upload_mode": "separate_uploads", "upload_mode_source": "jev",
   "files": { "inputs": [ { "index": 0, "file": "0_resume.pdf", "doc_type": "Resume", "original": "resume_google.pdf" } ],
              "finals": [ { "file": "Safwan-Hossain_Resume_1234567890.pdf", "doc_type": "Resume", "from": 0 } ],
@@ -112,15 +116,16 @@ Applications/
   "qa": { "questions": [ { "id": "q1", "text": "Why do you want to work here?",
                            "limit": { "unit": "chars", "value": 500 },
                            "status": "answered", "answer": "...", "feedback": null,
-                           "answered_at": "...", "model": "claude-haiku-5-5" } ] }
+                           "answered_at": "...", "model": "claude-haiku-5-5" } ] },
+  "notes": ""
 }
 ```
 
 Source-of-truth rule: Excel owns every tracker **row value**. `review.values` is what the engine last wrote; on session open the engine re-reads the row (matched via the `Folder` column) and shows Excel's values. Everything that is not a tracker column (posting text, Jev/LLM raw output, file manifest, Q&A) lives only in `session.json`.
 
-**Dropdown vocabulary** for `Application_Status`, `Applied_Through`, and `Found_From` is owned by HTP (`htp.config.json` `options`, falling back to shipped defaults in `columns.DEFAULT_OPTIONS`). The UI can append values via `POST /api/meta/options/{column}`; Excel whole-column list data-validations are mirrored from those lists (eager on add; reinforced on every tracker write; Settings **Sync Excel from HTP**). `Work_Mode`, `Employment_Type`, and `Outcome` stay code-only (Jev mappings / terminal semantics).
+**Dropdown vocabulary** for `Application_Status`, `Applied_Through`, and `Found_From` is owned by HTP (`htp.config.json` `options`, falling back to shipped defaults in `columns.DEFAULT_OPTIONS`). The UI can append values via **Add…** on those dropdowns (`POST /api/meta/options/{column}`). Excel **table-body** list data-validations (not whole-column) are mirrored from those lists plus code-owned lists (`Work_Mode`, `Employment_Type`, `Outcome`, `Role_Category`) on every tracker write / Sync. Inline Excel lists often use `", "` spacing; `parse_list_formula` strips each item so drift compare is not a false positive.
 
-**Tracker lock signal:** Excel’s sibling `~$…xlsx` owner file is `sigON` / `sigOFF`. A filesystem watcher (`backend/excel/lock_watch.py`) updates in-memory lock state; status reads also `exists()`-probe as backup. While locked, the UI greys out Create / Save row / Sync and shows a banner. Dropdown drift compare (`GET /tracker/status`) runs only when unlocked (API start, unlock transition, Settings refresh, cached by mtime + options fingerprint)—never by opening the workbook on a timer while Excel holds it.
+**Tracker lock signal:** Excel’s sibling `~$…xlsx` owner file is `sigON` / `sigOFF`. A filesystem watcher (`backend/excel/lock_watch.py`, `watchdog`) updates in-memory lock state; status reads also `exists()`-probe as backup. While locked, the UI greys out Create / Save row / Sync and shows a header banner. Dropdown drift compare (`GET /tracker/status`) runs only when unlocked (API start, unlock transition, status poll with cache by mtime + options fingerprint)—never by opening the workbook on a timer while Excel holds it.
 
 ## 5. Pipeline per new application
 
@@ -147,17 +152,19 @@ Existence nouls (gate LLM schema fields). Each carries `criteria.true` / `criter
 | `has_requisition_id` | The posting states an explicit requisition / job / reference ID. | e.g. "Req ID 12345", "R-98765", "JR0012", "Job ID: 4567" | No such ID; salaries, years of experience or phone numbers do not count |
 | `has_organization` | The hiring organization's name can be identified. | Company named anywhere, e.g. "About Shopify", "X is hiring" | Anonymous / agency hides client / no name |
 | `has_position_title` | A job title for this role is stated. | A title such as "Software Engineer II" | Only a department or vague description |
+| `has_location_country` | A country (or identifiable national location) for the role/office is indicated. | Named country, or city/province that clearly identifies one | No country; vague region only; remote with no geography |
+| `has_location_city` | A city/town/metro for the role/office is stated. | "Toronto", "New York, NY", "London office" | Country/province only; remote with no office city |
 | `has_compensation` | Pay is stated in numbers. | Salary, hourly rate, range or stipend with numbers | Only "competitive" or nothing |
 | `has_deadline` | An application closing date is stated. | "Apply by", "closes on", a date | "Open until filled" or nothing |
 | `has_recruiter_name` | A named contact person (recruiter / hiring manager) appears. | A person's name given as contact | No person named |
 | `has_recruiter_contact` | Contact details for a person appear. | Email, phone or LinkedIn of a contact | Only a generic careers address or nothing |
-| `has_role_categories` | Role categories (backend, frontend, devops, data, ...) can be inferred. | Tech stack / responsibilities make the area clear | Too generic to tell |
+| `has_subrole_categories` | Fine-grained technical sub-areas can be inferred. | Stack / responsibilities make specific areas clear | Too generic |
 | `has_position_level` | Seniority level is stated or clearly inferable. | "Junior", "Senior", "Intern", "3+ years" | Nothing about level |
 
 Choices (direct-to-Excel candidates):
 
 - `work_mode`: `in_person`, `hybrid`, `remote`, `travel`, `tbd`, `unknown`. `tbd` = posting says it is to be determined / discussed; `unknown` = not mentioned.
-- `employment_type`: `full_time`, `part_time`, `contract`, `contract_full_time`, `contract_part_time`, `internship`, `co_op`, `temporary`, `freelance`, `unknown`.
+- `employment_type`: `full_time` → Permanent Full-time, `part_time` → Permanent Part-time, `contract`, `contract_full_time`, `contract_part_time`, `internship` → Internship Full-time, `internship_part_time` → Internship Part-time, `co_op` → Co-op Full-time, `co_op_part_time` → Co-op Part-time, `temporary`, `freelance`, `unknown`.
 - `upload_mode`: `single_document` (resume only), `separate_uploads` (several documents, separate fields), `single_combined_file` (several documents merged into one file), `not_stated`. When Jev returns `not_stated` or no usable answer, the session's upload mode is `separate_uploads`.
 
 Document nouls (pre-fill the Files tab): `requires_cover_letter`, `requires_transcript`, `requires_portfolio`, `requires_references`.
@@ -166,7 +173,9 @@ Gate noul: `is_job_posting`.
 
 Thresholds (config, defaults): `noul_include_threshold = 0.35` (a field with noul >= 0.35 goes into the LLM schema; bias toward inclusion since an extra field just returns `null`), `choice_direct_confidence = 0.7` (choice written straight to Excel at or above this; below it the column is added to the LLM schema as an enum), document nouls >= 0.5 pre-tick a document type.
 
-Not sent to Jev or the LLM (manual): `Applied_Date`, `Posting_URL`, `Application_Status`, `Outcome`, `Applied_Through`, `Confirmation_#`, `Found_From` (`HiringCafe`, `LinkedIn`, `Indeed`, `GCJobs`, `CRA`, `Other`), `Days_Since_Applied` (formula), `Folder` (engine).
+Choices also include `role_category` (17 fixed buckets → Excel `Role_Category`, incl. Applied AI), classified in a **second** Jev call after subroles are known (state: posting + `subrole_categories`). Unlike Work_Mode / Employment_Type, `Role_Category` is **never left blank**: a valid Jev choice is kept even below `choice_direct_confidence`; missing/unknown choice falls back to `Other tech`.
+
+Not sent to Jev or the LLM (manual): `Applied_Date`, `Posting_URL`, `Application_Status`, `Outcome`, `Applied_Through`, `Found_From` (`HiringCafe`, `LinkedIn`, `Indeed`, `GCJobs`, `CRA`, `Other`), `Days_Since_Applied` (formula), `Folder` (engine).
 
 ## 7. LLM extraction (Claude Haiku 5.5)
 
@@ -179,16 +188,19 @@ Schema builder: starts from the ordered candidate list below, keeps only fields 
 | `requisition_id` | string / null | verbatim |
 | `organization` | string / null | hiring company, not the job board |
 | `position_title` | string / null | verbatim title |
+| `location_country` | string / null | common English country name; may be inferred from unambiguous city/province |
+| `location_city` | string / null | city / metro as written; null if remote with no office city |
 | `compensation` | string / null | verbatim incl. currency and period, e.g. "CAD 80,000-95,000 / year" |
 | `deadline` | string / null | `YYYY-MM-DD` if a date is given; else a short phrase like "Open until filled" |
 | `recruiter_name` | string / null | |
 | `recruiter_contact` | string / null | email / phone / URL |
-| `role_categories` | array of string | 1-3 short labels; **cap enforced in prompt and truncated to 3 in code** (Claude structured outputs reject `maxItems`) |
+| `subrole_categories` | array of string | 1-3 fine-grained labels → Excel `Subrole_Categories`; **cap enforced in prompt and truncated to 3 in code** |
+| *(Jev choice, not LLM)* `role_category` | enum of 17 | → Excel `Role_Category` (Frontend, Backend, …, Applied AI, Other tech, Non-tech) |
 | `position_level` | string / null | free text, one value (Intern, Junior, Senior, ...) |
 | `work_mode` | enum (Excel values) / null | only when Jev confidence < 0.7 |
 | `employment_type` | enum (Excel values) / null | only when Jev confidence < 0.7 |
 
-System prompt rules: extract only what the text supports; `null` when absent; never invent compensation or deadlines; at most 3 role categories, one position level; plain ASCII punctuation. Post-processing: trim strings, parse `deadline` to a date when it matches ISO, join `role_categories` with `, ` for Excel.
+System prompt rules: extract only what the text supports; `null` when absent; never invent compensation, deadlines or cities; country may be inferred from an unambiguous city/province; at most 3 subrole labels, one position level; plain ASCII punctuation. Post-processing: trim strings, parse `deadline` to a date when it matches ISO, join `subrole_categories` with `, ` for Excel.
 
 Cost note: ~3k input + ~300 output tokens per posting is well under a cent. The engine warns if any request exceeds ~80k tokens (Haiku's price rises 5x above 100k).
 
@@ -225,7 +237,7 @@ Conversions (also exposed as a standalone tool in the UI):
 - pdf -> png/jpg: PyMuPDF, one image per page `{stem}_p{n}.png` at configurable DPI (default 150).
 - png/jpg -> pdf: `img2pdf`.
 
-Combine (output is always PDF): every input is converted to PDF into `.converted/` inside the folder if needed (cache reused while newer than the source), merged with `pypdf` in display order, saved as `{Candidate_Name}_{X}.pdf` (re-combining overwrites it). Inputs stay in place. The Files tab shows first-page thumbnails (PyMuPDF, cached in `.thumbs/`; Office files go through the PDF cache), drag-reorder or ▲/▼ (files are renumbered on disk with a two-phase rename; finals' `from` and the combined file's `from_indices` are remapped), doc-type dropdown per file (pre-guessed from the file name: resume/cv, cover, transcript, portfolio, reference), per-file "Convert…" (result is appended as a new input with the same doc type), "Make final" (copy + rename per section 8; re-making replaces the earlier final from the same input), "Make finals" for every typed input, and "Combine → PDF". Files the user drops into the folder by hand are listed as *untracked* and can be adopted as inputs; manifest entries whose file disappeared are flagged as *missing*.
+Combine (output is always PDF): every input is converted to PDF into `.converted/` inside the folder if needed (cache reused while newer than the source), merged with `pypdf` in display order, saved as `{Candidate_Name}_{X}.pdf` (re-combining overwrites it). Inputs stay in place. The Files tab shows first-page thumbnails (PyMuPDF, cached in `.thumbs/`; Office files go through the PDF cache), drag-reorder or ▲/▼ (files are renumbered on disk with a two-phase rename; finals' `from` and the combined file's `from_indices` are remapped), doc-type dropdown per file (pre-guessed from the file name: resume/cv, cover, transcript, portfolio, reference), per-file convert buttons `→` + format logo (`pdf` / `docx` / `png` / `jpg` from `frontend/src/img/`; result appended as a new input with the same doc type), **Convert all → PDF** (arrow + `pdf_logo.png`; every non-PDF input → PDF appended as new inputs; `POST .../files/convert-all-pdf`), "Make final" (copy + rename per section 8; re-making replaces the earlier final from the same input), "Make finals" for every typed input, and "Combine → PDF". Files the user drops into the folder by hand are listed as *untracked* and can be adopted as inputs; manifest entries whose file disappeared are flagged as *missing*.
 
 Implementation: `backend/files/convert.py` (conversions, `to_pdf`, `thumbnail`, tool detection), `combine.py` (pypdf merge), `manager.py` (`FileManager`: manifest + disk in sync, `x_for()` = {X} from Excel's row when readable). LibreOffice runs headless with a persistent private profile in `%TEMP%/htp_lo_profile` (first call ~15 s, then ~3 s per document). File names from the API are validated to be plain names inside the folder.
 
@@ -241,11 +253,15 @@ Operations: add one or several questions (one per line) with optional limit; edi
 
 ## 12. UI screens
 
-1. **Dashboard** - list of application folders with status/outcome read from Excel; "New application". Deadline is not a column here. Row color follows Outcome when it is terminal (Withdrawn grey, Rejected red, Offer and Accepted light green). While Outcome is Pending or blank, Application_Status sets the color (Not Applied yellow, Applied the default white, Recruiter-Screening light blue, Technical Interview orange, Final Round light purple).
-2. **New application** - paste posting + URL -> Run -> three panels: Jev results (chips with probability/confidence), extracted fields (editable form), manual fields (Applied_Date, Posting_URL, Application_Status, Outcome, Applied_Through, Found_From, Confirmation_#). Dropdowns for Status / Applied Through / Found From include **Add…** to permanently grow the list (config + Excel DV). A "Possible duplicate" banner lists matching sessions (section 15); "Create" makes the folder and writes the row, asking for confirmation when a duplicate was flagged.
-3. **Session** - tabs: Overview (Excel read-back, edit manual fields, write; **Re-extract** card runs Jev/LLM again on the stored posting and shows a per-column diff against the row with checkboxes; "Apply" writes the chosen columns with `force_columns`), Files (section 10), Questions (section 11), Log (raw Jev/LLM payloads of the latest run, usage).
-4. **Convert** - standalone converter (section 10); nothing is stored.
-5. **Settings** - edits `htp.config.json` through `PUT /settings` (partial, deep-merged, validated; `settings()` cache cleared); shows key presence (never the keys), tracker / candidate-context presence, resolved paths, and a tail of the log file.
+**Chrome (all pages):** header status icons from `frontend/src/img/` (Excel green/red = tracker found/missing; Jev green/red = TYPESAFE key; Claude orange/grey = Anthropic key; locked tracker dims the Excel icon). Amber banner when the tracker is open in Excel.
+
+**Sync dock** (`SyncDock.vue`, right column beside main content): sticky panel for the three editable dropdown columns only. Minimized = colored chrome only (refresh arrows + green Excel logo | min/max); maximized grows left into the flex row and shows per-column diffs (only-in-HTP / only-in-Excel / order / missing DV). Button tone: blue = in sync (still clickable), yellow = differs, grey = locked. Sync pushes HTP → Excel (`POST /meta/options/sync`). Distinct from the Dashboard list-refresh control (refresh icon only, no Excel logo).
+
+1. **Dashboard** - list of application folders with status/outcome read from Excel; icon-only **Refresh** reloads `GET /sessions` (does not sync dropdowns); "New application". Deadline is not a column here. Row color follows Outcome when it is terminal (Withdrawn grey, Rejected red, Offer and Accepted light green). While Outcome is Pending or blank, Application_Status sets the color (Not Applied yellow, Applied the default white, Recruiter-Screening light blue, Technical Interview orange, Final Round light purple). Metrics at the bottom (`DashboardMetrics.vue`).
+2. **New application** - paste posting + URL -> Run -> three panels: Jev results (chips with probability/confidence), extracted fields (editable form; Compensation has a compact **Estimated.** toggle stored only in `session.json`), manual fields (Applied_Date, Posting_URL, Application_Status, Outcome, Applied_Through, Found_From). Dropdowns for Status / Applied Through / Found From include **Add…** to permanently grow the list (config + Excel DV). A "Possible duplicate" banner lists matching sessions (section 15); "Create" makes the folder and writes the row, asking for confirmation when a duplicate was flagged (disabled while tracker locked).
+3. **Session** - tabs: Overview (Excel read-back, edit manual fields, write; Compensation **Estimated.** flag via `PUT /flags`; **Duplicate…** opens a panel to edit identifying fields — especially `Requisition_ID` — then creates a new folder dated today with the same posting/Jev/LLM and empty files/Q&A; **Re-extract** card runs Jev/LLM again on the stored posting and shows a per-column diff against the row with checkboxes; "Apply" writes the chosen columns with `force_columns`), Files (section 10), Questions (section 11; unsaved answer drafts in other boxes are preserved when saving/answering/regenerating one question), Notes (plain textarea; auto-saves to `session.notes`), Log (raw Jev/LLM payloads of the latest run, usage). Save / Retry / Apply / Duplicate disabled while tracker locked.
+4. **Convert** - standalone converter (section 10); nothing is stored. Multi-file drop + **→ PDF** (`POST /files/convert-all-pdf`) downloads one PDF or a zip; already-PDF uploads are passed through.
+5. **Settings** - edits `htp.config.json` through `PUT /settings` (partial, deep-merged, validated; `settings()` cache cleared; retargets lock watch); shows key / tracker / candidate-context presence with paths on their own wrapping lines, and a tail of the log file. Dropdown sync UX lives in the Sync dock, not on this page.
 
 ## 13. Config (`htp.config.json`)
 
@@ -274,23 +290,27 @@ Operations: add one or several questions (one per line) with optional limit; edi
 | Method + path | Purpose |
 |---|---|
 | `GET /health` | cold-start poll |
-| `GET /meta` / `GET /settings` | column lists + resolved dropdown options (+ `editable_option_columns`); key presence, paths, tracker status |
+| `GET /meta` / `GET /settings` | column lists + resolved dropdown options (+ `editable_option_columns`); key presence, paths; settings also includes `tracker_status` |
 | `POST /meta/options/{column}` `{value}` | append to an editable dropdown list (`Application_Status` / `Applied_Through` / `Found_From`); persists to config; syncs Excel list DV (options still saved if Excel is locked — `excel_synced: false`) |
 | `POST /meta/options/sync` | push HTP editable option lists into Excel list DVs; 423 if locked |
 | `GET /tracker/status?force=` | lock state (`~$` watch + probe) + dropdown DV compare vs HTP (`in_sync` / `mismatched` / `locked` / …); `suggest_sync` when unlocked and mismatched |
 | `GET /sessions` / `GET /sessions/{folder}` | list / load (includes Excel read-back and unmanaged folders) |
 | `POST /extract` | posting -> Jev answers + derived + LLM values in one call (`use_jev` / `use_llm` toggles); also returns `duplicates: [{folder, reason}]` |
 | `POST /sessions` | create folder + session.json + Excel row (extraction + manual values + row overrides); 409 `DuplicateError` (with `duplicates`) unless `allow_duplicate: true` |
+| `POST /sessions/{folder}/duplicate` | clone into a new folder dated today (`{values}` overrides applied before naming); copies posting + Jev/LLM; files/Q&A empty; always allows same posting hash |
+| `PUT /sessions/{folder}/flags` | UI-only session flags (not Excel), currently `{compensation_estimated}` |
+| `PUT /sessions/{folder}/notes` | free-text Notes tab body (`{notes}`); session.json only |
 | `PUT /sessions/{folder}/row` | write edited fields; body `{values, force_columns}` — `force_columns` overwrite, others fill-only-empty |
 | `POST /sessions/{folder}/row/retry` | flush `review.pending_write` (`{values, force_columns}`) after Excel is closed |
 | `POST /sessions/{folder}/reextract` `{use_jev, use_llm}` | run extraction again on the stored posting; returns `{extraction, row, diff:[{column, current, proposed, changed}]}` over the extracted columns; writes nothing to Excel, replaces `jev`/`llm` in session.json |
 | `GET|POST /sessions/{folder}/files` | manifest view (`FilesView`: files, upload mode, required docs, untracked, missing, `x`, tools) / multipart upload (`files[]`) |
 | `PUT .../files/order` `{order}` · `PUT .../files/{idx}` `{doc_type}` · `DELETE .../files/{idx}` | reorder (renumbers on disk), set doc type, delete input |
 | `POST .../files/{idx}/convert` `{target}` | convert one input; result appended as new input(s) |
+| `POST .../files/convert-all-pdf` | convert every non-PDF input to PDF; results appended as new inputs |
 | `POST .../files/final` `{indices?}` · `POST .../files/combine` `{indices?}` · `DELETE .../files/output/{name}` | make finals (default: all typed) / combine (default: all) / delete a final or the combined PDF |
 | `POST .../files/adopt` `{name}` · `PUT .../files/upload-mode` `{upload_mode}` | adopt an untracked file / override upload mode |
 | `GET .../files/thumb/{name}?width=` · `GET .../files/download/{name}?inline=` | first-page PNG / file download or inline open |
-| `GET /files/tools` · `POST /files/convert` (multipart `file` + `target`) | tool availability / standalone converter: returns the file, or a zip when a PDF yields several images |
+| `GET /files/tools` · `POST /files/convert` (multipart `file` + `target`) · `POST /files/convert-all-pdf` (multipart `files`) | tool availability / standalone converter / multi-file → PDF (zip when >1; PDFs passed through) |
 | `GET /sessions/{folder}/qa` | `QAView`: questions, usage, context-file presence + path, `answers.md` presence, org/title |
 | `POST .../qa/questions` `{questions:[{text, limit?}]}` · `PUT .../qa/questions/order` `{order}` · `PUT .../qa/questions/{qid}` `{text?, limit?, clear_limit?, answer?}` · `DELETE .../qa/questions/{qid}` | manage questions; `answer` = manual answer |
 | `POST .../qa/answer` `{ids?}` · `POST .../qa/regenerate/{qid}` `{feedback?}` | answer pending (or given ids) in one call / redo one with feedback |
@@ -306,6 +326,7 @@ LLM/Jev failures return HTTP 502 with the provider message (as in Resumate); Exc
 ## 15. Edge cases
 
 - Posting pasted twice: `duplicates.find_duplicates()` compares the normalised posting hash (`posting.hash` in session.json; computed on the fly for older sessions) and the extracted Requisition_ID (+ Organization when both have one) against every session. `POST /extract` reports hits; `POST /sessions` refuses with 409 unless `allow_duplicate`; the UI shows a banner and asks for confirmation. The CLI has `--allow-duplicate`.
+- Same role, different requisition (intentional second application): use Session **Duplicate…**, change `Requisition_ID` (and any other fields) in the panel, then Create. Folder name uses the new values + today's date; the original session is untouched. `POST /sessions/{folder}/duplicate` always sets `allow_duplicate`.
 - Re-extraction: `POST /sessions/{f}/reextract` never writes; the diff is computed against the Excel row (falls back to `review.values` when the workbook is unreadable) and applied by the user through `PUT /row` with `force_columns`.
 - Jev 429/529: SDK backoff; surface after 3 attempts.
 - LLM returns a value for a field Jev gated out: impossible by construction (field not in schema).
@@ -313,6 +334,8 @@ LLM/Jev failures return HTTP 502 with the provider message (as in Resumate); Exc
 - Deadline not ISO: stored as text; `Days_Since_Applied` unaffected.
 - Folder exists but no `session.json` (manual folder): listed as "unmanaged", can be adopted.
 - Tracker headers changed: writer fails fast with the missing header name.
+- Excel list DV uses spaces after commas: stripped on read so HTP vs Excel compare is not a false mismatch.
+- Orphan `~$…xlsx` after an Excel crash keeps the UI in locked state until the lock file is removed.
 
 ## 16. Implementation order
 
