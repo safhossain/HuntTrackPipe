@@ -1,18 +1,12 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { SessionSummary } from '../api/client'
+import { outcomeColorBuckets } from '../applicationColors'
 
 const props = defineProps<{ sessions: SessionSummary[] }>()
 
 const PALETTE = ['#4f46e5', '#0ea5e9', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#64748b', '#ec4899', '#14b8a6']
 
-const OUTCOME_COLOR: Record<string, string> = {
-  Pending: '#94a3b8',
-  Withdrawn: '#64748b',
-  Rejected: '#ef4444',
-  Offer: '#10b981',
-  Accepted: '#047857',
-}
 const STATUS_COLOR: Record<string, string> = {
   'Not Applied': '#94a3b8',
   Applied: '#3b82f6',
@@ -21,7 +15,7 @@ const STATUS_COLOR: Record<string, string> = {
   'Final Round': '#d946ef',
 }
 
-interface Bucket { label: string; n: number; color: string }
+interface Bucket { key?: string; label: string; n: number; color: string }
 interface Slice extends Bucket { d: string; full: boolean }
 
 function cell(s: SessionSummary, col: string): string {
@@ -110,7 +104,7 @@ function barWidth(items: Bucket[], n: number): string {
 }
 
 const total = computed(() => props.sessions.length)
-const byOutcome = computed(() => tally((s) => cell(s, 'Outcome'), OUTCOME_COLOR))
+const byOutcome = computed(() => outcomeColorBuckets(props.sessions.map((s) => s.row)))
 const byStatus = computed(() => tally((s) => cell(s, 'Application_Status'), STATUS_COLOR))
 const byWorkMode = computed(() => tally((s) => cell(s, 'Work_Mode')))
 const byCountry = computed(() => tallyMulti((s) => splitLocations(cell(s, 'Location_Country'))))
@@ -197,17 +191,21 @@ const subroleCount = computed(() => bySubrole.value.filter((b) => b.label !== 'N
         <h3 class="mb-2 text-sm font-semibold">Outcome</h3>
         <p v-if="!byOutcome.length" class="text-sm text-slate-500">No applications yet.</p>
         <div v-else class="flex items-center gap-4">
-          <svg viewBox="0 0 100 100" class="h-28 w-28 shrink-0" role="img" aria-label="Outcome pie chart">
-            <template v-for="s in outcomeSlices" :key="s.label">
-              <circle v-if="s.full" cx="50" cy="50" r="42" :fill="s.color" />
-              <path v-else :d="s.d" :fill="s.color" />
+          <svg viewBox="0 0 100 100" class="h-28 w-28 shrink-0" role="img" aria-label="Outcomes grouped by dashboard row color">
+            <template v-for="s in outcomeSlices" :key="s.key">
+              <circle v-if="s.full" cx="50" cy="50" r="42" :fill="s.color" stroke="var(--color-slate-300)" stroke-width="0.5">
+                <title>{{ s.label }}: {{ s.n }}</title>
+              </circle>
+              <path v-else :d="s.d" :fill="s.color" stroke="var(--color-slate-300)" stroke-width="0.5">
+                <title>{{ s.label }}: {{ s.n }}</title>
+              </path>
             </template>
           </svg>
           <ul class="min-w-0 space-y-1 text-xs">
-            <li v-for="s in byOutcome" :key="s.label" class="flex items-center gap-2">
-              <span class="h-2.5 w-2.5 shrink-0 rounded-sm" :style="{ background: s.color }" />
-              <span class="truncate">{{ s.label }}</span>
-              <span class="tabular-nums text-slate-500">{{ s.n }}</span>
+            <li v-for="s in byOutcome" :key="s.key" class="flex items-start gap-2">
+              <span class="h-2.5 w-2.5 shrink-0 rounded-sm ring-1 ring-inset ring-slate-300" :style="{ background: s.color }" />
+              <span class="min-w-0 break-words" :title="s.label">{{ s.label }}</span>
+              <span class="shrink-0 tabular-nums text-slate-500">{{ s.n }}</span>
             </li>
           </ul>
         </div>

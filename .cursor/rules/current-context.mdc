@@ -17,7 +17,7 @@ alwaysApply: true
   - Settings: `PUT /api/settings {config}` deep-merges into the current config, validates with `Settings`, writes `CONFIG_PATH` (paths as posix), `settings.cache_clear()`, re-points logging + retargets lock watch; 400 with field names on validation error. `GET /settings` paths include `config_path`, `log_path`, `tracker_status`. `SettingsView.vue` at `/settings` (form, status, log tail).
   - Tests: `tests/` (pytest offline): `conftest.py` sets `HTP_CONFIG` before importing `backend`, synthetic tracker, fake Jev/Claude. Includes list-DV sync, option add, tracker lock/status. Run `python -m pytest`.
 - **After step 5 (agreed):**
-  - Dashboard bottom: `DashboardMetrics.vue`. Six client-side metrics from `GET /api/sessions`. No chart library.
+  - Dashboard bottom: `DashboardMetrics.vue`. Eleven client-side cards from `GET /api/sessions`: Total / Outcome / Work mode; Country / City / Role category; Subroles / Applied through / Employment type; Status (two columns, includes Applied_Date statistics); Created by month (full width on large screens). Locations/subroles split lists for counting; identified counts exclude `Not set`. No chart library. See DESIGN section 12.3 for counting rules and date calculations.
   - Upload mode default `separate_uploads` when Jev does not state one. Existing `not_stated` sessions left alone.
   - Posting boxes show `cleanPostingText` + Copy all; create/dupe/re-extract use raw paste.
   - Dashboard: no Deadline column; row colors as before; icon-only list Refresh (reload sessions only).
@@ -41,3 +41,8 @@ One-time migrations live under `scripts/one_time/` (`python -m scripts.one_time.
 - Manual runs: never against the real tracker; copy it to `%TEMP%\htp_ui`, write a config there (incl. `candidate_context_path` to a fictional context) and set `HTP_CONFIG`.
 - Start the API without `--reload` from a background shell when testing from the agent; restart it after backend edits. Seed sessions/files via the API since the Cursor browser cannot pick files.
 - Keep scratch tests outside the repo; `git status` must stay clean of test artifacts. Remove `%TEMP%\htp_ui` afterwards.
+
+## Dashboard sync placement (2026-11-07)
+- SyncDock is beside New application. Expansion shifts actions left and the table down without changing its width.
+- Starts minimized and expands on differences; yellow floats top-right after the action row leaves view and returns inline on scroll-back with expansion state retained. Blue scrolls normally; other pages retain the sticky side column.
+- Typecheck passed; browser measurements confirmed unchanged table width during expansion. Yellow scrolling was not exercised with live mismatched data.

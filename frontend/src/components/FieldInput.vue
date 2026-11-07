@@ -5,6 +5,7 @@
 import { computed, ref } from 'vue'
 import { api, ApiError, type RowValue } from '../api/client'
 import { useAppStore } from '../stores/app'
+import { outcomeLabel } from '../utils'
 
 const props = defineProps<{
   column: string
@@ -125,7 +126,7 @@ async function onSelectChange(ev: Event) {
       @change="onSelectChange"
     >
       <option value="">—</option>
-      <option v-for="o in options" :key="o" :value="o">{{ o }}</option>
+      <option v-for="o in options" :key="o" :value="o">{{ column === 'Outcome' ? outcomeLabel(o) : o }}</option>
       <option v-if="editable" :value="ADD">Add…</option>
     </select>
     <input v-else-if="isDate" type="date" class="input" :value="str.slice(0, 10)" @input="onInput" />

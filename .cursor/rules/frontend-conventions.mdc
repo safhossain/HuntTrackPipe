@@ -9,6 +9,11 @@ alwaysApply: false
 - Stack: Vue 3, Vite 7, Pinia, Tailwind v4. No chart library. Dashboard charts are SVG and CSS in `DashboardMetrics.vue`, fed by the sessions list already loaded on the dashboard.
 - `cleanPostingText` (`frontend/src/utils.ts`) is for the on-screen posting and Copy all. Do not run it on the text sent to create, duplicate detection, or re-extract.
 - Header status icons live in `frontend/src/img/` (not `img/reference/`). Sync dock (`SyncDock.vue`) is refresh+Excel logo for HTP→Excel dropdown sync; Dashboard Refresh is refresh-only (reload sessions list). Do not conflate the two.
+- Navbar and content use the shared `.page-shell` width/padding so the pin's right edge aligns with the dashboard table frame across viewport sizes. Group controls as Excel / Jev / Claude / pin, each 20×20px and vertically centered; keep the pin in that row rather than positioning it absolutely.
 - FieldInput **Add…** only for `editable_option_columns` from `/meta` (Application_Status, Applied_Through, Found_From).
 - After a UI change, run `cd frontend && npx vue-tsc --noEmit`, then exercise the changed flow in the browser. Seed files through the API; the Cursor browser cannot pick files.
 - Dev UI is `npm run ui` (Vite, port 5180, `strictPort`, `/api` proxy to 127.0.0.1:8010). Do not add a second dev server or change that port.
+
+- Dashboard SyncDock sits immediately right of New application. Expansion animates left/down (300ms), shifting actions left and the full-width table down. Keep controls right-aligned at the same vertical position.
+- Refresh, New application, and SyncDock chrome share `.toolbar-control` (2rem / 32px height) and aligned top edges. Draw the expanded dock outline with an inset ring so its frame does not offset the controls.
+- Start minimized; expand on detected differences. Only yellow floats top-right when the action row leaves view, returning inline on scroll-back. Preserve expansion state and layout space while floating. Blue scrolls away normally; other pages retain the sticky right column.

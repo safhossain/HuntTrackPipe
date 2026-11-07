@@ -1,5 +1,7 @@
 import { ApiError } from './api/client'
 
+export { outcomeLabel } from './applicationColors'
+
 export function errorText(e: unknown): string {
   if (e instanceof ApiError) {
     if (e.isLocked) return `Excel has the tracker open. Close it and retry. (${e.message})`

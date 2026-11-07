@@ -2,6 +2,8 @@
 **/.env.*
 **/__pycache__/**
 **/node_modules/**
+/debug.log
+/output/
 JobHunting/Applications/*
 JobHunting/candidate_context.txt
 htp.config.json

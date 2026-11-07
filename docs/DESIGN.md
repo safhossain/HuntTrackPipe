@@ -1,6 +1,6 @@
 # HuntTrackPipe - Design Spec (v1)
 
-Status: for review, nothing implemented yet. Decisions below reflect the Q&A rounds of 2026-10-11.
+Status: core pipeline, CLI, webapp, files, Q&A, and hardening are implemented. This document describes the current implementation, including workflow and dashboard updates through 2026-11-07.
 
 ## 1. Goal and scope
 
@@ -37,7 +37,7 @@ HuntTrackPipe/
     config.py               # loads htp.config.json + .env; Settings model
     naming.py               # sanitize(), folder_name(), final_file_name()
     columns.py              # column registry; DEFAULT_OPTIONS + resolved_options() / meta_payload()
-    pipeline.py             # extract() + create_application(); shared by CLI and API
+    pipeline.py             # extract(), create_application(), duplicate_application()
     duplicates.py           # posting hash + find_duplicates(); DuplicateError (409)
     logs.py                 # console + rotating file log under Applications/.htp_logs/
     jev/
@@ -65,6 +65,17 @@ HuntTrackPipe/
     api/routers/
       sessions.py, extract.py, files.py, qa.py, settings.py
   frontend/                 # Vue app
+    src/
+      App.vue               # header logo, navigation, status icons, Sync dock
+      applicationColors.ts  # shared row palette/priority + Outcome chart grouping
+      views/DashboardView.vue
+      components/DashboardMetrics.vue
+      img/hunttrackpipe-logo.png
+    public/
+      favicon.png           # primary browser-tab icon
+      favicon.ico           # fallback browser-tab icon
+    tests/applicationColors.test.mjs  # Node tests for priority and row/chart agreement
+    package.json            # dev, build, typecheck, test:colors, preview
   tests/                    # pytest suite (offline; synthetic tracker + fake Jev/Claude)
   pytest.ini
   docs/DESIGN.md
@@ -121,9 +132,11 @@ Applications/
 }
 ```
 
-Source-of-truth rule: Excel owns every tracker **row value**. `review.values` is what the engine last wrote; on session open the engine re-reads the row (matched via the `Folder` column) and shows Excel's values. Everything that is not a tracker column (posting text, Jev/LLM raw output, file manifest, Q&A) lives only in `session.json`.
+Source-of-truth rule: Excel owns every tracker **row value**. `review.values` is what the engine last wrote; on session open the engine re-reads the row (matched via the `Folder` column) and shows Excel's values. Everything that is not a tracker column (posting text, Jev/LLM raw output, file manifest, Q&A, `notes`, `review.compensation_estimated`) lives only in `session.json`.
 
 **Dropdown vocabulary** for `Application_Status`, `Applied_Through`, and `Found_From` is owned by HTP (`htp.config.json` `options`, falling back to shipped defaults in `columns.DEFAULT_OPTIONS`). The UI can append values via **Add…** on those dropdowns (`POST /api/meta/options/{column}`). Excel **table-body** list data-validations (not whole-column) are mirrored from those lists plus code-owned lists (`Work_Mode`, `Employment_Type`, `Outcome`, `Role_Category`) on every tracker write / Sync. Inline Excel lists often use `", "` spacing; `parse_list_formula` strips each item so drift compare is not a false positive.
+
+The stored Outcome vocabulary is `Pending`, `Early interest`, `Withdrawn`, `Rejected`, `Offer`, `Accepted`. The frontend recognizes legacy `Some interest` as `Early interest` for display/color compatibility. That alias does not migrate stored values. When renaming a dropdown option, update `backend/columns.py`, sync the workbook's validation list, and migrate affected Outcome cells plus `review.values.Outcome` and any queued `review.pending_write.values.Outcome`. Back up before migrating and verify the saved validation list and cells. A label-only change is not a completed data rename.
 
 **Tracker lock signal:** Excel’s sibling `~$…xlsx` owner file is `sigON` / `sigOFF`. A filesystem watcher (`backend/excel/lock_watch.py`, `watchdog`) updates in-memory lock state; status reads also `exists()`-probe as backup. While locked, the UI greys out Create / Save row / Sync and shows a header banner. Dropdown drift compare (`GET /tracker/status`) runs only when unlocked (API start, unlock transition, status poll with cache by mtime + options fingerprint)—never by opening the workbook on a timer while Excel holds it.
 
@@ -253,15 +266,95 @@ Operations: add one or several questions (one per line) with optional limit; edi
 
 ## 12. UI screens
 
-**Chrome (all pages):** header status icons from `frontend/src/img/` (Excel green/red = tracker found/missing; Jev green/red = TYPESAFE key; Claude orange/grey = Anthropic key; locked tracker dims the Excel icon). Amber banner when the tracker is open in Excel.
+**Chrome (all pages):** the HuntTrackPipe PNG wordmark links to `/`; browser tabs prefer the PNG favicon with an ICO fallback (asset locations in section 12.2). Header status icons from `frontend/src/img/` indicate Excel green/red = tracker found/missing; Jev green/red = TYPESAFE key; Claude orange/grey = Anthropic key. A locked tracker dims the Excel icon and shows an amber banner.
 
-**Sync dock** (`SyncDock.vue`, right column beside main content): sticky panel for the three editable dropdown columns only. Minimized = colored chrome only (refresh arrows + green Excel logo | min/max); maximized grows left into the flex row and shows per-column diffs (only-in-HTP / only-in-Excel / order / missing DV). Button tone: blue = in sync (still clickable), yellow = differs, grey = locked. Sync pushes HTP → Excel (`POST /meta/options/sync`). Distinct from the Dashboard list-refresh control (refresh icon only, no Excel logo).
+Navbar and content share `.page-shell` (80rem maximum width, 1rem side padding). The right-aligned control group is Excel / Jev / Claude / pin, all 20×20px and vertically centered. The pin's right edge aligns with the dashboard table frame as the viewport changes, including when the navbar is pinned.
 
-1. **Dashboard** - list of application folders with status/outcome read from Excel; icon-only **Refresh** reloads `GET /sessions` (does not sync dropdowns); "New application". Deadline is not a column here. Row color follows Outcome when it is terminal (Withdrawn grey, Rejected red, Offer and Accepted light green). While Outcome is Pending or blank, Application_Status sets the color (Not Applied yellow, Applied the default white, Recruiter-Screening light blue, Technical Interview orange, Final Round light purple). Metrics at the bottom (`DashboardMetrics.vue`).
+**Sync dock** (`SyncDock.vue`): on the Dashboard, sits immediately right of New application. Other pages retain the sticky right column. Comparison covers the three editable dropdown columns only. Minimized = colored chrome only (refresh arrows + green Excel logo | min/max); maximized grows left and down, shifting Dashboard actions left and the full-width table down with a 300ms transition. It shows per-column diffs (only-in-HTP / only-in-Excel / order / missing DV). Button tone: blue = in sync (still clickable), yellow = differs, grey = locked. Sync pushes all mirrored lists, including code-owned Outcome, from HTP to Excel (`POST /meta/options/sync`). Distinct from the Dashboard list-refresh control (refresh icon only, no Excel logo).
+
+Dashboard sync starts minimized and expands on detected differences. While yellow, it floats at the top right after the action row scrolls out of view, returning inline when that row reappears; expansion state is retained across position changes. Blue panels scroll away normally. A placeholder preserves document height during floating transitions.
+
+1. **Dashboard** - list of application folders with status/outcome read from Excel; icon-only **Refresh** reloads `GET /sessions` (does not sync dropdowns); "New application". Deadline is not a column here. Status, Outcome, Applied, and Days headers/cells are centered; Status/Outcome badges are centered within their cells and their text is centered inside the badges, including wrapped labels. Row colors and the Outcome pie/legend share one resolver; see section 12.1. Metrics at the bottom (`DashboardMetrics.vue`).
 2. **New application** - paste posting + URL -> Run -> three panels: Jev results (chips with probability/confidence), extracted fields (editable form; Compensation has a compact **Estimated.** toggle stored only in `session.json`), manual fields (Applied_Date, Posting_URL, Application_Status, Outcome, Applied_Through, Found_From). Dropdowns for Status / Applied Through / Found From include **Add…** to permanently grow the list (config + Excel DV). A "Possible duplicate" banner lists matching sessions (section 15); "Create" makes the folder and writes the row, asking for confirmation when a duplicate was flagged (disabled while tracker locked).
-3. **Session** - tabs: Overview (Excel read-back, edit manual fields, write; Compensation **Estimated.** flag via `PUT /flags`; **Duplicate…** opens a panel to edit identifying fields — especially `Requisition_ID` — then creates a new folder dated today with the same posting/Jev/LLM and empty files/Q&A; **Re-extract** card runs Jev/LLM again on the stored posting and shows a per-column diff against the row with checkboxes; "Apply" writes the chosen columns with `force_columns`), Files (section 10), Questions (section 11; unsaved answer drafts in other boxes are preserved when saving/answering/regenerating one question), Notes (plain textarea; auto-saves to `session.notes`), Log (raw Jev/LLM payloads of the latest run, usage). Save / Retry / Apply / Duplicate disabled while tracker locked.
+3. **Session** - tabs: Overview (Excel read-back, edit row fields, write; Posting URL **Open** and **Copy link** controls; Compensation **Estimated.** flag via `PUT /flags`; **Duplicate…** edits identifying fields before creating a new folder dated today, copying posting/Jev/LLM, notes, upload preferences, and the estimate flag, with empty files/Q&A; **Re-extract** shows a per-column diff and applies selected columns using `force_columns`), Files (section 10), Questions (section 11; saving/answering/regenerating one question preserves unsaved drafts in other boxes while the panel is mounted), Notes (plain textarea; auto-saves to `session.notes` after a 500 ms typing pause and on blur), Log (raw Jev/LLM payloads of the latest run, usage). Save / Retry / Apply / Duplicate disabled while tracker locked.
 4. **Convert** - standalone converter (section 10); nothing is stored. Multi-file drop + **→ PDF** (`POST /files/convert-all-pdf`) downloads one PDF or a zip; already-PDF uploads are passed through.
 5. **Settings** - edits `htp.config.json` through `PUT /settings` (partial, deep-merged, validated; `settings()` cache cleared; retargets lock watch); shows key / tracker / candidate-context presence with paths on their own wrapping lines, and a tail of the log file. Dropdown sync UX lives in the Sync dock, not on this page.
+
+### 12.1 Dashboard row colors and Outcome chart
+
+[`frontend/src/applicationColors.ts`](../frontend/src/applicationColors.ts) owns both the palette and the priority rules. It imports Tailwind's actual color values; custom Early interest colors live alongside them. `resolveRowColors(row)` returns the normal background, hover background, foreground, and link color. `rowColorStyle(row)` exposes these through CSS custom properties consumed by `DashboardView.vue`.
+
+Apply these rules to the normalized Outcome (`Some interest` is treated as `Early interest`):
+
+| Outcome condition | Status condition | Normal row background | Hover background |
+|---|---|---|---|
+| Withdrawn | Any | `slate-600` | `slate-700` |
+| Rejected | Any | `red-100` | `red-200` |
+| Offer or Accepted | Any | `emerald-100` | `emerald-200` |
+| Early interest | Applied | `#E8EEF6` | `#D8E2EF` |
+| Pending, blank, or Early interest | Not Applied | `yellow-100` | `yellow-200` |
+| Pending, blank, or Early interest | Recruiter-Screening | `sky-100` | `sky-200` |
+| Pending, blank, or Early interest | Technical Interview | `orange-100` | `orange-200` |
+| Pending, blank, or Early interest | Final Round | `violet-100` | `violet-200` |
+| Any combination not matched above | Any | White | `slate-50` |
+
+Unrecognized outcomes use white even if the status is recognized. Missing rows and blank/unrecognized statuses also fall back to white unless an outcome rule applies. Early interest foreground is `#52647A`; Withdrawn uses `slate-50` text and `indigo-100` links. Other rows use `slate-900` text and `indigo-600` links. Status/outcome badges are styled independently and do not determine the row background.
+
+**Chart grouping:** `outcomeColorBuckets(rows)` calls the same resolver for each application and groups by `(normalized outcome, resolved normal background)`. `DashboardMetrics.vue` uses each bucket's color for both its SVG slice and legend swatch. There is no separate Outcome chart color map. Hover colors affect table rows only.
+
+- Every managed application contributes to exactly one bucket; missing rows are included under `Not set`.
+- When an outcome has multiple background colors, labels include the contributing statuses, such as `Early interest — Applied` and `Early interest — Technical Interview`. If several statuses share one bucket, their names are joined with ` / `.
+- An outcome with only one background color keeps its plain outcome label, even when several statuses contribute.
+- Offer and Accepted remain distinct categories despite sharing the same green.
+- Buckets sort by count descending, then label. Slice tooltips show the label and count; subtle outlines keep white slices and legend swatches visible.
+
+**Maintenance:** change the shared palette or `resolveRowColors` once. Do not add separate row priority logic to `DashboardView.vue` or an Outcome palette to `DashboardMetrics.vue`. Update this table when rules change, then run the frontend checks in section 17. Other charts and badges retain independent palettes.
+
+### 12.2 Branding assets
+
+The compact global navbar in `App.vue` is unpinned by default. Its top-right icon toggles a fixed header across routes, preserving layout space and scroll position. Unpinning while scrolled animates it upward over 260 ms and hides it until the user returns to the top. At the top, unpinning simply restores normal document flow. Pin state is in memory and resets on reload. A fixed bottom-left icon button, visible when scrolled, scrolls smoothly to the top and has a `Scroll to top` tooltip/accessible name. Both animations respect reduced-motion preferences. Header height is observed so the fixed header's placeholder and Sync dock offsets include any Excel-lock banner.
+
+| Asset | Location | Consumer |
+|---|---|---|
+| Logo PNG | `frontend/src/img/hunttrackpipe-logo.png` | `App.vue` imports it inside the existing dashboard link (`to="/"`) |
+| Icon PNG | `frontend/public/favicon.png` | Preferred favicon in `frontend/index.html` |
+| ICO | `frontend/public/favicon.ico` | Favicon fallback, with 16–256 px frames |
+
+Vite bundles the imported header logo and copies the public favicon files into the production build. The HTML declares ICO first and PNG last to prefer PNG among supported icons.
+
+### 12.3 Dashboard metrics cards
+
+`DashboardMetrics.vue` computes all 11 cards client-side from the managed sessions returned by `GET /api/sessions`, using their Excel row values and session `created_at`. Unmanaged folders are excluded. Dashboard Refresh reloads this data; there is no separate metrics endpoint or chart library (pies use SVG, bars use CSS).
+
+On large screens the grid has three columns, ordered as follows:
+
+| Row | Cards, left to right | Display |
+|---|---|---|
+| 1 | Total applications · Outcome · Work mode | Session count · pie · pie |
+| 2 | Location country · Location city · Role category | Three pies |
+| 3 | Subrole categories · Applied through · Employment type | Pie · horizontal bars · pie |
+| 4 | Status | Two-column-wide card with three calculated statistics above status bars |
+| 5 | Created by month | Full-width horizontal bars |
+
+The grid reduces to two columns at the small breakpoint and one on narrower screens. Status spans two columns wherever available; Created by month spans all three only on large screens.
+
+**Counting and labels:**
+
+- Total applications counts managed sessions, including those without a matching Excel row. Ordinary missing/blank field values appear as `Not set`; Outcome follows section 12.1's shared color grouping.
+- Work mode, Role category, Applied through, Employment type, and Status group by their corresponding Excel field. Role category counts the single `Role_Category` value; Subrole categories uses `Subrole_Categories`.
+- Location country/city split free text on semicolons, pipes, slashes, and whitespace-separated `and`, `or`, or `&` (case-insensitive separators). Bare commas are preserved, so `Toronto, ON` remains one label. Subroles split on commas. Parts are trimmed and exact duplicates within each application are removed; label casing and aliases are not normalized.
+- Each distinct location/subrole contributes once per application. These pies therefore represent label occurrences, and their summed counts can exceed Total applications. Splitting is for metrics only; it does not rewrite Excel values.
+- Location country, Location city, Role category, and Subrole categories show the number of distinct labels identified, excluding `Not set`. Blank values still contribute to the pie's `Not set` slice.
+- Buckets sort by count descending, then label; Created by month sorts chronologically by `YYYY-MM`. Pie proportions use the sum of bucket counts. Bar widths are relative to the largest bucket in that card, not a percentage of all applications.
+- Created by month uses session `created_at`, with missing timestamps grouped as `Unknown`; it does not use Applied_Date. Empty datasets show `No applications yet.` and Total applications shows zero.
+
+**Status statistics:** rows participate when `Applied_Date` is present and its first ten characters match `YYYY-MM-DD`, regardless of Application_Status or Outcome. In this card, “sent” means having that date; a defaulted date also qualifies.
+
+1. **Avg applications / day:** qualifying application count divided by the inclusive calendar span from earliest to latest Applied_Date, including intervening days with no applications. Displayed to two decimal places, with the count and day span beneath it. The span does not extend to today.
+2. **Busiest apply day:** date with the largest qualifying count, plus that count; ties choose the earliest date.
+3. **Top organizations:** up to three organizations among qualifying rows, with counts; missing organizations are excluded and ties sort alphabetically.
+
+If no dates qualify, the card shows an explanatory message in place of these statistics. Status bars still include all managed sessions.
 
 ## 13. Config (`htp.config.json`)
 
@@ -292,12 +385,12 @@ Operations: add one or several questions (one per line) with optional limit; edi
 | `GET /health` | cold-start poll |
 | `GET /meta` / `GET /settings` | column lists + resolved dropdown options (+ `editable_option_columns`); key presence, paths; settings also includes `tracker_status` |
 | `POST /meta/options/{column}` `{value}` | append to an editable dropdown list (`Application_Status` / `Applied_Through` / `Found_From`); persists to config; syncs Excel list DV (options still saved if Excel is locked — `excel_synced: false`) |
-| `POST /meta/options/sync` | push HTP editable option lists into Excel list DVs; 423 if locked |
+| `POST /meta/options/sync` | push all mirrored HTP lists (editable + code-owned, including Outcome) into Excel table-body list DVs; 423 if locked |
 | `GET /tracker/status?force=` | lock state (`~$` watch + probe) + dropdown DV compare vs HTP (`in_sync` / `mismatched` / `locked` / …); `suggest_sync` when unlocked and mismatched |
 | `GET /sessions` / `GET /sessions/{folder}` | list / load (includes Excel read-back and unmanaged folders) |
 | `POST /extract` | posting -> Jev answers + derived + LLM values in one call (`use_jev` / `use_llm` toggles); also returns `duplicates: [{folder, reason}]` |
 | `POST /sessions` | create folder + session.json + Excel row (extraction + manual values + row overrides); 409 `DuplicateError` (with `duplicates`) unless `allow_duplicate: true` |
-| `POST /sessions/{folder}/duplicate` | clone into a new folder dated today (`{values}` overrides applied before naming); copies posting + Jev/LLM; files/Q&A empty; always allows same posting hash |
+| `POST /sessions/{folder}/duplicate` | clone into a new folder dated today (`{values}` overrides applied before naming); copies posting, Jev/LLM, notes, estimate flag, upload preferences; files/Q&A empty; always allows same posting hash |
 | `PUT /sessions/{folder}/flags` | UI-only session flags (not Excel), currently `{compensation_estimated}` |
 | `PUT /sessions/{folder}/notes` | free-text Notes tab body (`{notes}`); session.json only |
 | `PUT /sessions/{folder}/row` | write edited fields; body `{values, force_columns}` — `force_columns` overwrite, others fill-only-empty |
@@ -340,11 +433,30 @@ LLM/Jev failures return HTTP 502 with the provider message (as in Resumate); Exc
 ## 16. Implementation order
 
 1. ✅ **Core, no UI**: config, naming, session store, Jev client + questions, schema builder, Claude client, Excel writer; a small CLI (`python -m backend.run --posting file.txt`) to validate end to end.
-2. ✅ **Webapp**: Dashboard, New application, Session Overview (tracker-row editor, pending-write banner + retry, posting text, Jev/LLM log). Files and Questions tabs are placeholders.
+2. ✅ **Webapp**: Dashboard, New application, Session Overview (tracker-row editor, pending-write banner + retry, posting text, Jev/LLM log). Files and Questions were completed in steps 3 and 4; Notes and application duplication are also available.
 3. ✅ **Files**: conversions, combine, thumbnails, reorder UI, standalone `/convert` page.
 4. ✅ **Q&A**.
 5. ✅ **Hardening**: committed `tests/` (pytest, offline), re-extract diff, duplicate detection, logs, Settings page. Backups and the lock flow were already in place from step 1-2.
 
 ## 17. Tests
 
-`python -m pytest` from the repo root (venv active). `tests/conftest.py` points `HTP_CONFIG` at a scratch config before `backend` is imported and gives every test a fresh Applications dir, a synthetic tracker (19 headers, table `Applications`, seed row with the formula) and a candidate-context file under `tmp_path`. Jev and Claude are never called: `test_jev_schema.py` feeds synthetic answers to `derive()`, `test_qa.py` uses a scripted fake client, and `test_api.py` monkeypatches `extract` / `ClaudeClient` in the routers and drives the whole API through `TestClient`. LibreOffice is not required (PDF/PNG only).
+### Backend
+
+```powershell
+python -m pytest
+```
+
+Run from the repo root with the venv active. `tests/conftest.py` points `HTP_CONFIG` at a scratch config before `backend` is imported and gives every test a fresh Applications dir, a synthetic tracker (22 headers, table `Applications`, seed row with the formula) and a candidate-context file under `tmp_path`. Jev and Claude are never called: `test_jev_schema.py` feeds synthetic answers to `derive()`, `test_qa.py` uses a scripted fake client, and `test_api.py` monkeypatches `extract` / `ClaudeClient` in the routers and drives the API through `TestClient`. LibreOffice is not required (PDF/PNG only).
+
+### Frontend
+
+Run from the repo root with Node 22.18+ and frontend dependencies installed:
+
+```powershell
+npm --prefix frontend run test:colors
+npm --prefix frontend run build
+```
+
+`test:colors` runs `frontend/tests/applicationColors.test.mjs` using Node's built-in test runner and TypeScript support. It checks Early interest/status precedence, final-outcome overrides, mixed-color outcome splitting, count preservation, legacy label merging, empty/unknown inputs, and row/chart agreement after a status change. These tests require neither the API nor a live tracker.
+
+`build` runs `vue-tsc -b` followed by `vite build`; `npm --prefix frontend run typecheck` runs only the TypeScript check. The bundle is written to `frontend/dist/`.

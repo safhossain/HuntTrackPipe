@@ -1,13 +1,21 @@
 <script setup lang="ts">
 // Floating right-side dock for Application_Status / Applied_Through / Found_From
 // dropdown sync. Minimized = sync icon only; maximized = per-column diffs.
-import { computed, ref } from 'vue'
+import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue'
 import { api, type DropdownColumnDiff } from '../api/client'
 import { useAppStore } from '../stores/app'
 import { errorText } from '../utils'
 import excelOk from '../img/excel-icon-green.png'
 
 const EDITABLE = ['Application_Status', 'Applied_Through', 'Found_From'] as const
+const props = defineProps<{ dashboard?: boolean }>()
+const anchor = ref<HTMLElement | null>(null)
+const panel = ref<HTMLElement | null>(null)
+const controls = ref<HTMLElement | null>(null)
+const aboveViewport = ref(false)
+const floatingRight = ref(16)
+const panelHeight = ref(32)
+let observer: ResizeObserver | undefined
 const app = useAppStore()
 const syncing = ref(false)
 const expanded = ref(false) // always start minimized
@@ -20,6 +28,37 @@ const syncTone = computed<'locked' | 'differs' | 'ok'>(() => {
 })
 
 const syncEnabled = computed(() => syncTone.value !== 'locked' && !syncing.value)
+const floating = computed(() => props.dashboard && aboveViewport.value && syncTone.value === 'differs')
+
+watch(syncTone, (tone) => {
+  if (props.dashboard && tone === 'differs') expanded.value = true
+})
+
+function updatePosition() {
+  if (!anchor.value) return
+  const rect = anchor.value.getBoundingClientRect()
+  aboveViewport.value = rect.top + (controls.value?.getBoundingClientRect().height ?? 32) <= 16
+  floatingRight.value = Math.max(16, window.innerWidth - rect.right)
+}
+
+onMounted(() => {
+  if (!props.dashboard) return
+  if (syncTone.value === 'differs') expanded.value = true
+  observer = new ResizeObserver(() => {
+    if (panel.value) panelHeight.value = panel.value.getBoundingClientRect().height
+    updatePosition()
+  })
+  if (panel.value) observer.observe(panel.value)
+  window.addEventListener('scroll', updatePosition, { passive: true })
+  window.addEventListener('resize', updatePosition)
+  updatePosition()
+})
+
+onBeforeUnmount(() => {
+  observer?.disconnect()
+  window.removeEventListener('scroll', updatePosition)
+  window.removeEventListener('resize', updatePosition)
+})
 
 const statusLine = computed(() => {
   if (syncTone.value === 'locked') return 'Tracker open in Excel — sync unavailable'
@@ -107,21 +146,28 @@ function joinList(values: string[]) {
 </script>
 
 <template>
+  <div
+    ref="anchor"
+    :class="props.dashboard ? 'shrink-0 transition-[width] duration-300 ease-in-out motion-reduce:transition-none' : 'sticky top-4 shrink-0'"
+    :style="props.dashboard ? { width: expanded ? '18rem' : '5.75rem', height: floating ? `${panelHeight}px` : undefined } : { top: 'calc(var(--navbar-offset, 0px) + 16px)' }"
+  >
   <!-- Numeric widths only (not w-auto) so width+flex neighbor can ease smoothly.
        Chrome stays right-aligned so sync/min-max keep the same screen position. -->
   <aside
+    ref="panel"
     v-if="app.apiReady"
-    class="sticky top-4 z-20 flex shrink-0 flex-col overflow-hidden rounded-lg border transition-[width,background-color,border-color,box-shadow] duration-300 ease-in-out"
+    class="z-20 flex shrink-0 flex-col overflow-hidden rounded-lg transition-[width,background-color,box-shadow] duration-300 ease-in-out motion-reduce:transition-none"
+    :style="floating ? { position: 'fixed', top: 'calc(var(--navbar-offset, 0px) + 16px)', right: `${floatingRight}px` } : undefined"
     :class="expanded
-      ? 'w-72 border-slate-200 bg-white shadow-md'
-      : 'w-[5.75rem] border-transparent bg-transparent shadow-none'"
+      ? 'w-72 bg-white shadow-md ring-1 ring-inset ring-slate-200'
+      : 'w-[5.75rem] bg-transparent shadow-none'"
     aria-label="Dropdown sync"
   >
     <!-- One colored chrome; two hit targets (sync | min/max). Minimized: chrome only (no white frame). -->
     <div
-      class="ml-auto flex w-[5.75rem] overflow-hidden rounded-md transition-[margin] duration-300 ease-in-out"
+      ref="controls"
+      class="toolbar-control ml-auto flex w-[5.75rem] overflow-hidden rounded-md"
       :class="[
-        expanded ? 'm-1.5' : 'm-0',
         {
           'bg-slate-200 text-slate-400': syncTone === 'locked',
           'bg-amber-400 text-amber-950': syncTone === 'differs',
@@ -132,7 +178,7 @@ function joinList(values: string[]) {
     >
       <button
         type="button"
-        class="flex h-9 flex-1 items-center justify-center gap-1 px-1 transition"
+        class="flex h-full flex-1 items-center justify-center gap-1 px-1 transition"
         :class="{
           'cursor-not-allowed': !syncEnabled,
           'hover:bg-black/10': syncEnabled && syncTone === 'differs',
@@ -163,7 +209,7 @@ function joinList(values: string[]) {
       </button>
       <button
         type="button"
-        class="flex h-9 w-8 items-center justify-center transition hover:bg-black/10"
+        class="flex h-full w-8 items-center justify-center transition hover:bg-black/10"
         :title="expanded ? 'Minimize' : 'Maximize'"
         :aria-expanded="expanded"
         :aria-label="expanded ? 'Minimize sync panel' : 'Maximize sync panel'"
@@ -184,7 +230,7 @@ function joinList(values: string[]) {
       class="overflow-hidden transition-[max-height,opacity] duration-300 ease-in-out"
       :class="expanded ? 'max-h-[min(70vh,28rem)] opacity-100' : 'max-h-0 opacity-0'"
     >
-      <div class="space-y-3 overflow-y-auto border-t border-slate-100 px-3 pb-3 pt-2 text-xs text-slate-700">
+      <div class="max-h-[min(70vh,28rem)] w-[17.875rem] space-y-3 overflow-y-auto border-t border-slate-100 px-3 pb-3 pt-2 text-xs text-slate-700">
         <p class="font-medium text-slate-800">{{ statusLine }}</p>
         <p class="text-[11px] leading-4 text-slate-500">
           Compares Application Status, Applied Through, Found From only. Sync writes HTP → Excel.
@@ -218,4 +264,5 @@ function joinList(values: string[]) {
       </div>
     </div>
   </aside>
+  </div>
 </template>

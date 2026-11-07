@@ -67,7 +67,7 @@ DEFAULT_OPTIONS: dict[str, list[str]] = {
     "Work_Mode": list(WORK_MODE_VALUES.values()),
     "Employment_Type": list(EMPLOYMENT_TYPE_VALUES.values()),
     "Application_Status": ["Not Applied", "Applied", "Recruiter-Screening", "Technical Interview", "Final Round"],
-    "Outcome": ["Pending", "Withdrawn", "Rejected", "Offer", "Accepted"],
+    "Outcome": ["Pending", "Early interest", "Withdrawn", "Rejected", "Offer", "Accepted"],
     "Applied_Through": ["Org-Portal", "Indeed", "LinkedIn", "Email", "Workday", "Greenhouse", "AshbyHQ", "UltiPro", "Other"],
     "Found_From": ["HiringCafe", "LinkedIn", "Indeed", "GCJobs", "CRA", "Other"],
     "Role_Category": list(ROLE_CATEGORY_VALUES.values()),

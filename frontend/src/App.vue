@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
-import { RouterLink, RouterView } from 'vue-router'
+import { computed, onMounted, onBeforeUnmount, ref } from 'vue'
+import { RouterLink, RouterView, useRoute } from 'vue-router'
 import { useAppStore } from './stores/app'
 import SyncDock from './components/SyncDock.vue'
 import ToastStack from './components/ToastStack.vue'
 
+import huntTrackPipeLogo from './img/hunttrackpipe-logo.png'
 import excelOk from './img/excel-icon-green.png'
 import excelBad from './img/excel-icon-red.png'
 import jevOk from './img/jev_logo-transparent_green.png'
@@ -13,7 +14,63 @@ import claudeOk from './img/claude_orange.png'
 import claudeBad from './img/claude_grey.png'
 
 const app = useAppStore()
+const route = useRoute()
 onMounted(() => app.bootstrap())
+
+const navbar = ref<HTMLElement | null>(null)
+const pinned = ref(false)
+const unpinning = ref(false)
+const hiddenUntilTop = ref(false)
+const navbarHeight = ref(0)
+const scrollY = ref(0)
+const floating = computed(() => pinned.value || unpinning.value)
+let resizeObserver: ResizeObserver | undefined
+let exitAnimation: Animation | undefined
+const reducedMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches
+const trackScroll = () => {
+  scrollY.value = window.scrollY
+  if (scrollY.value === 0) hiddenUntilTop.value = false
+}
+
+onMounted(() => {
+  trackScroll()
+  window.addEventListener('scroll', trackScroll, { passive: true })
+  resizeObserver = new ResizeObserver(() => {
+    navbarHeight.value = navbar.value?.offsetHeight ?? 0
+  })
+  if (navbar.value) resizeObserver.observe(navbar.value)
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('scroll', trackScroll)
+  resizeObserver?.disconnect()
+  exitAnimation?.cancel()
+})
+
+async function togglePin() {
+  if (unpinning.value) return
+  if (!pinned.value) {
+    navbarHeight.value = navbar.value?.offsetHeight ?? 0
+    pinned.value = true
+    return
+  }
+  // Keep the fixed header and its layout space until the exit finishes.
+  unpinning.value = window.scrollY > 0
+  pinned.value = false
+  if (!unpinning.value) return
+  exitAnimation = navbar.value?.animate(
+    [{ transform: 'translateY(0)' }, { transform: 'translateY(-100%)' }],
+    { duration: reducedMotion() ? 0 : 260, easing: 'ease-in', fill: 'forwards' },
+  )
+  try { await exitAnimation?.finished } catch { /* Cancelled on unmount. */ }
+  hiddenUntilTop.value = window.scrollY > 0
+  unpinning.value = false
+  exitAnimation?.cancel()
+  exitAnimation = undefined
+}
+
+function scrollToTop() {
+  window.scrollTo({ top: 0, behavior: reducedMotion() ? 'instant' : 'smooth' })
+}
 
 const trackerIcon = computed(() => (app.settings?.tracker_exists ? excelOk : excelBad))
 const trackerTitle = computed(() => {
@@ -34,17 +91,21 @@ const claudeTitle = computed(() =>
 </script>
 
 <template>
-  <div class="min-h-screen">
-    <header class="border-b border-slate-200 bg-white">
-      <div class="mx-auto flex max-w-6xl items-center gap-6 px-4 py-3">
-        <RouterLink to="/" class="text-lg font-semibold tracking-tight">HuntTrackPipe</RouterLink>
-        <nav class="flex gap-4 whitespace-nowrap text-sm">
+  <div class="min-h-screen" :style="{ '--navbar-offset': floating ? `${navbarHeight}px` : '0px' }">
+    <div :style="floating ? { height: `${navbarHeight}px` } : undefined">
+    <header ref="navbar" class="relative border-b border-slate-200 bg-white" :class="[floating ? 'navbar-floating shadow-sm' : undefined, hiddenUntilTop && !floating ? 'invisible' : undefined]">
+      <div class="page-shell flex items-center gap-3 py-1.5 sm:gap-6">
+        <RouterLink to="/" class="shrink-0">
+          <img :src="huntTrackPipeLogo" alt="HuntTrackPipe" width="2172" height="724" class="h-auto w-28 sm:w-32" />
+        </RouterLink>
+        <nav class="flex min-w-0 gap-4 overflow-x-auto whitespace-nowrap text-sm">
           <RouterLink to="/" class="hover:text-indigo-600" active-class="text-indigo-600 font-medium" exact-active-class="text-indigo-600 font-medium">Dashboard</RouterLink>
           <RouterLink to="/new" class="hover:text-indigo-600" active-class="text-indigo-600 font-medium">New application</RouterLink>
           <RouterLink to="/convert" class="hover:text-indigo-600" active-class="text-indigo-600 font-medium">Convert</RouterLink>
           <RouterLink to="/settings" class="hover:text-indigo-600" active-class="text-indigo-600 font-medium">Settings</RouterLink>
         </nav>
-        <div class="ml-auto flex items-center gap-2.5">
+        <div class="ml-auto flex shrink-0 items-center gap-2.5">
+
           <template v-if="app.settings">
             <img
               :src="trackerIcon"
@@ -58,6 +119,21 @@ const claudeTitle = computed(() =>
           </template>
           <span v-else-if="app.apiError" class="text-xs text-red-600">API unreachable</span>
           <span v-else class="text-xs text-slate-500">Connecting…</span>
+          <button
+            type="button"
+            class="flex h-5 w-5 shrink-0 items-center justify-center rounded hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-indigo-600"
+            :class="pinned ? 'bg-indigo-50 text-indigo-600' : 'text-slate-500'"
+            :title="pinned ? 'Unpin navbar' : 'Pin navbar'"
+            :aria-label="pinned ? 'Unpin navbar' : 'Pin navbar'"
+            :aria-pressed="pinned"
+            :disabled="unpinning"
+            @click="togglePin"
+          >
+            <svg class="h-5 w-5 transition-transform" :class="pinned ? '' : '-rotate-45'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M9 3h6l-1 7 4 4v2H6v-2l4-4-1-7Z" />
+              <path d="M12 16v6" />
+            </svg>
+          </button>
         </div>
       </div>
       <div
@@ -67,16 +143,30 @@ const claudeTitle = computed(() =>
         Tracker workbook is open in Excel. Close it before creating applications, saving rows, or syncing dropdowns.
       </div>
     </header>
+    </div>
 
     <!-- Content + sync column share one row: small gap, no overlay, no empty canyon. -->
-    <div class="mx-auto flex max-w-7xl items-start gap-4 px-4 py-6">
+    <div class="page-shell flex items-start gap-4 py-6">
       <main class="min-w-0 flex-1">
         <div v-if="!app.apiReady && !app.apiError" class="text-sm text-slate-500">Waiting for the API on :8010…</div>
         <RouterView v-else />
       </main>
-      <SyncDock />
+      <SyncDock v-if="route.path !== '/'" />
     </div>
 
+    <button v-show="scrollY > 0" type="button" class="fixed bottom-4 left-4 z-30 flex h-10 w-10 items-center justify-center rounded-full border border-slate-300 bg-white text-slate-600 shadow-md hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-indigo-600" title="Scroll to top" aria-label="Scroll to top" @click="scrollToTop">
+      <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="m6 10 6-6 6 6M12 4v16" />
+      </svg>
+    </button>
     <ToastStack />
   </div>
 </template>
+
+<style scoped>
+.navbar-floating {
+  position: fixed;
+  inset: 0 0 auto;
+  z-index: 40;
+}
+</style>
