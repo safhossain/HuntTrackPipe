@@ -13,7 +13,7 @@ A local pipeline that takes a pasted job posting and:
 4. Renames, converts and combines application files into one PDF.
 5. Answers application text-field questions from your own candidate context file.
 
-Complementary to [Resumate](../resumate) but deliberately decoupled: the two share files, not code.
+Complementary to [Resumate](https://github.com/safhossain/Resumate) but deliberately decoupled: the two share files, not code.
 
 Full design: [`docs/DESIGN.md`](docs/DESIGN.md).
 
@@ -38,6 +38,7 @@ Start the API and the UI together:
 UI:  http://localhost:5180
 API: http://127.0.0.1:8010
 
+Note: this is really only relevant to me, you'd have to change these yourself:
 Open the UI. The page at `:5180` proxies `/api` to `:8010`, so the browser only talks to 5180. If 5180 is already taken, Vite exits (`strictPort`) instead of switching ports. Resumate uses `:8000` and `:5173`, so both apps can run at the same time.
 
 Start them in two terminals instead:
