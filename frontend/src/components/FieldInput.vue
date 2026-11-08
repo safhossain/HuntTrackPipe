@@ -5,7 +5,7 @@
 import { computed, ref } from 'vue'
 import { api, ApiError, type RowValue } from '../api/client'
 import { useAppStore } from '../stores/app'
-import { outcomeLabel } from '../utils'
+import { outcomeLabel, postingUrlHref } from '../utils'
 
 const props = defineProps<{
   column: string
@@ -29,20 +29,7 @@ const str = computed(() => (props.modelValue === null || props.modelValue === un
 const adding = ref(false)
 const selectEl = ref<HTMLSelectElement | null>(null)
 
-const postingHref = computed(() => {
-  if (props.column !== 'Posting_URL') return ''
-  const raw = str.value.trim()
-  if (!raw) return ''
-  const withScheme = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`
-  try {
-    const url = new URL(withScheme)
-    if (url.protocol !== 'http:' && url.protocol !== 'https:') return ''
-    if (!url.hostname.includes('.')) return ''
-    return url.href
-  } catch {
-    return ''
-  }
-})
+const postingHref = computed(() => props.column === 'Posting_URL' ? postingUrlHref(props.modelValue) : '')
 
 async function copyPostingLink() {
   const link = postingHref.value
@@ -126,8 +113,8 @@ async function onSelectChange(ev: Event) {
       @change="onSelectChange"
     >
       <option value="">—</option>
-      <option v-for="o in options" :key="o" :value="o">{{ column === 'Outcome' ? outcomeLabel(o) : o }}</option>
       <option v-if="editable" :value="ADD">Add…</option>
+      <option v-for="o in options" :key="o" :value="o">{{ column === 'Outcome' ? outcomeLabel(o) : o }}</option>
     </select>
     <input v-else-if="isDate" type="date" class="input" :value="str.slice(0, 10)" @input="onInput" />
     <div v-else-if="isCompensation" class="flex min-w-0 items-end gap-1.5">

@@ -18,7 +18,9 @@ from pathlib import Path
 from typing import Any
 
 from openpyxl import load_workbook
-from openpyxl.utils import get_column_letter, range_boundaries
+from openpyxl.utils import get_column_letter, quote_sheetname, range_boundaries
+from openpyxl.workbook import Workbook
+from openpyxl.workbook.defined_name import DefinedName
 from openpyxl.worksheet.datavalidation import DataValidation
 from openpyxl.worksheet.table import Table
 from openpyxl.worksheet.worksheet import Worksheet
@@ -37,6 +39,9 @@ DATE_FORMAT = "yyyy-mm-dd"
 BACKUP_DIR = ".htp_backup"
 # Excel inline list formula1 (contents inside the quotes) max length.
 EXCEL_LIST_MAX = 255
+_ROLE_LIST_COLUMN = "Role_Category"
+_ROLE_LIST_SHEET = "_HTP_Lists"
+_ROLE_LIST_NAME = "HTP_Role_Category_Options"
 log = logging.getLogger("htp.tracker")
 
 
@@ -52,11 +57,62 @@ def _dv_covers_column(dv: DataValidation, col_idx: int) -> bool:
     return False
 
 
-def _list_formula(values: list[str]) -> str:
+def _managed_role_list(wb: Workbook) -> tuple[Worksheet, int] | None:
+    """Identify our workbook-scoped range before reading or updating it."""
+    definition = wb.defined_names.get(_ROLE_LIST_NAME)
+    if definition is None or _ROLE_LIST_SHEET not in wb.sheetnames:
+        return None
+    sheet = wb[_ROLE_LIST_SHEET]
+    sheet_ref, separator, cells = definition.attr_text.partition("!")
+    if sheet.sheet_state != "veryHidden" or not separator or sheet_ref not in (
+        _ROLE_LIST_SHEET, quote_sheetname(_ROLE_LIST_SHEET),
+    ):
+        return None
+    try:
+        first_col, first_row, last_col, last_row = range_boundaries(cells)
+    except ValueError:
+        return None
+    if first_col == last_col == first_row == 1 and last_row is not None and last_row >= 1:
+        return sheet, last_row
+    return None
+
+
+def _write_role_list(ws: Worksheet, values: list[str]) -> str:
+    wb = ws.parent
+    folded_name = _ROLE_LIST_NAME.casefold()
+    if any(name.casefold() == folded_name for name in ws.defined_names):
+        raise TrackerError(f"Cannot use a workbook range named {_ROLE_LIST_NAME!r}: the sheet already defines that name.")
+    managed = _managed_role_list(wb)
+    if managed is None:
+        if any(name.casefold() == _ROLE_LIST_SHEET.casefold() for name in wb.sheetnames) or any(
+            name.casefold() == folded_name for name in wb.defined_names
+        ):
+            raise TrackerError(f"Reserved Excel sheet {_ROLE_LIST_SHEET!r} or range {_ROLE_LIST_NAME!r} is already in use.")
+        sheet = wb.create_sheet(_ROLE_LIST_SHEET)
+        sheet.sheet_state = "veryHidden"
+        old_length = 0
+    else:
+        sheet, old_length = managed
+
+    for row, value in enumerate(values, start=1):
+        cell = sheet.cell(row, 1, value)
+        cell.data_type = "s"
+    for row in range(len(values) + 1, old_length + 1):
+        sheet.cell(row, 1).value = None
+    wb.defined_names.add(DefinedName(
+        _ROLE_LIST_NAME,
+        attr_text=f"{quote_sheetname(sheet.title)}!$A$1:$A${len(values)}",
+    ))
+    return _ROLE_LIST_NAME
+
+
+def _list_formula(ws: Worksheet, column: str, values: list[str]) -> str:
     if any("," in v for v in values):
         raise TrackerError("Dropdown values cannot contain commas (Excel list delimiter).")
     joined = ",".join(values)
     if len(joined) > EXCEL_LIST_MAX:
+        if column == _ROLE_LIST_COLUMN:
+            return _write_role_list(ws, values)
         raise TrackerError(
             f"Dropdown list is too long for Excel inline validation "
             f"({len(joined)} > {EXCEL_LIST_MAX} characters)."
@@ -84,10 +140,11 @@ def _apply_list_validations(
         if name not in headers:
             continue
         col = headers[name]
+        formula = _list_formula(ws, name, values)
         remaining = [dv for dv in dvs if not _dv_covers_column(dv, col)]
         dvs[:] = remaining
         letter = get_column_letter(col)
-        dv = DataValidation(type="list", formula1=_list_formula(values), allow_blank=True)
+        dv = DataValidation(type="list", formula1=formula, allow_blank=True)
         dv.add(f"{letter}{body_first_row}:{letter}{body_last_row}")
         ws.add_data_validation(dv)
         touched.append(name)
@@ -176,8 +233,8 @@ class Tracker:
             raise TrackerLocked(f"{self.path.name} is locked by another program. Close it and retry.") from exc
 
     def read_list_options(self, columns: list[str] | tuple[str, ...]) -> dict[str, list[str] | None]:
-        """Return inline list-validation choices per header name (``None`` if missing/unparsed)."""
-        _, ws, table = self._open()
+        """Return inline or HTP-managed list choices per header, if readable."""
+        wb, ws, table = self._open()
         headers = self._headers(ws, table)
         out: dict[str, list[str] | None] = {}
         for name in columns:
@@ -188,7 +245,16 @@ class Tracker:
             found: list[str] | None = None
             for dv in ws.data_validations.dataValidation:
                 if dv.type == "list" and _dv_covers_column(dv, col):
-                    found = parse_list_formula(dv.formula1)
+                    formula = (dv.formula1 or "").strip()
+                    if name == _ROLE_LIST_COLUMN and formula.removeprefix("=").casefold() == _ROLE_LIST_NAME.casefold():
+                        managed = _managed_role_list(wb)
+                        if managed is not None:
+                            sheet, length = managed
+                            values = [sheet.cell(row, 1).value for row in range(1, length + 1)]
+                            if all(isinstance(value, str) for value in values):
+                                found = [value.strip() for value in values]
+                    else:
+                        found = parse_list_formula(dv.formula1)
                     break
             out[name] = found
         return out

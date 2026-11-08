@@ -15,6 +15,7 @@ from ...excel.dropdown_sync import dropdown_cache, sync_dropdowns_to_excel
 from ...excel.lock_watch import lock_watch
 from ...excel.status import tracker_status_dict
 from ...excel.tracker import Tracker, TrackerError, TrackerLocked
+from ...llm.client import claude_credit_low, openai_credit_low
 from ...logs import log_path, setup_logging, tail
 from ..deps import get_settings
 from ..models import (
@@ -28,7 +29,7 @@ from ..models import (
 
 router = APIRouter(tags=["settings"])
 log = logging.getLogger("htp.api")
-KEYS = ("TYPESAFE_API_KEY", "ANTHROPIC_API_KEY")
+KEYS = ("TYPESAFE_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY")
 
 
 @router.get("/meta")
@@ -37,7 +38,10 @@ def meta() -> dict:
 
 
 def _tracker_status(cfg: Settings, *, force_compare: bool = False) -> TrackerStatusResponse:
-    return TrackerStatusResponse.model_validate(tracker_status_dict(cfg, force_compare=force_compare))
+    status = tracker_status_dict(cfg, force_compare=force_compare)
+    return TrackerStatusResponse(
+        **status, claude_credit_low=claude_credit_low(cfg), openai_credit_low=openai_credit_low(cfg),
+    )
 
 
 def _view(cfg: Settings) -> SettingsResponse:

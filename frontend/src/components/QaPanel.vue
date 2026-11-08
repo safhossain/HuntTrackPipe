@@ -156,8 +156,8 @@ const answersUrl = computed(() => (view.value?.answers_md ? api.downloadUrl(prop
         <label class="flex items-center gap-1">
           limit
           <select v-model="newLimitUnit" class="input w-auto">
-            <option value="">none</option>
             <option value="chars">characters</option>
+            <option value="">none</option>
             <option value="words">words</option>
           </select>
           <input v-model.number="newLimitValue" type="number" min="1" class="input w-24" :disabled="!newLimitUnit" placeholder="max" />
@@ -168,7 +168,7 @@ const answersUrl = computed(() => (view.value?.answers_md ? api.downloadUrl(prop
 
     <!-- toolbar -->
     <div class="flex flex-wrap items-center gap-2 text-sm">
-      <button class="btn-primary" :disabled="!!busy || !pending.length || !view.candidate_context_exists" @click="answerPending" :title="view.candidate_context_exists ? 'One Claude call for every pending question' : 'Create the candidate context file first'">
+      <button class="btn-primary" :disabled="!!busy || !pending.length || !view.candidate_context_exists" @click="answerPending" :title="view.candidate_context_exists ? `Answer every pending question with ${app.modelProviderLabel}` : 'Create the candidate context file first'">
         {{ busy === 'answer' ? 'Answering…' : `Answer pending (${pending.length})` }}
       </button>
       <a v-if="answersUrl" :href="answersUrl" target="_blank" class="btn-secondary">Open answers.md</a>
@@ -190,8 +190,8 @@ const answersUrl = computed(() => (view.value?.answers_md ? api.downloadUrl(prop
             <div class="mt-1 flex flex-wrap items-center gap-2 text-xs">
               limit
               <select v-model="editing[q.id]!.unit" class="input w-auto">
-                <option value="">none</option>
                 <option value="chars">characters</option>
+                <option value="">none</option>
                 <option value="words">words</option>
               </select>
               <input v-model.number="editing[q.id]!.value" type="number" min="1" class="input w-24" :disabled="!editing[q.id]!.unit" />

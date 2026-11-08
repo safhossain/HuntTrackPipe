@@ -1,16 +1,20 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import { api, type SessionListResponse } from '../api/client'
 import DashboardMetrics from '../components/DashboardMetrics.vue'
-import SyncDock from '../components/SyncDock.vue'
+import PageHeader from '../components/PageHeader.vue'
 import { rowColorStyle } from '../applicationColors'
 import { useAppStore } from '../stores/app'
-import { daysSince, errorText, fmtDate, outcomeLabel } from '../utils'
+import { daysSince, errorText, fmtDate, outcomeLabel, postingUrlHref } from '../utils'
 
 const app = useAppStore()
 const data = ref<SessionListResponse | null>(null)
 const loading = ref(false)
+const sessions = computed(() => (data.value?.sessions ?? []).map((session) => ({
+  ...session,
+  postingHref: postingUrlHref(session.row?.Posting_URL),
+})))
 
 async function load() {
   loading.value = true
@@ -44,9 +48,8 @@ const outcomeCls: Record<string, string> = {
 
 <template>
   <div class="space-y-4">
-    <div class="flex flex-wrap items-start justify-between gap-2">
-      <h1 class="text-xl font-semibold">Applications</h1>
-      <div class="ml-auto flex max-w-full items-start gap-2">
+    <PageHeader title="Applications">
+      <template #actions>
         <button
           type="button"
           class="btn-secondary toolbar-control w-8 px-0"
@@ -73,9 +76,8 @@ const outcomeCls: Record<string, string> = {
           </svg>
         </button>
         <RouterLink to="/new" class="btn-primary toolbar-control">New application</RouterLink>
-        <SyncDock dashboard />
-      </div>
-    </div>
+      </template>
+    </PageHeader>
 
     <div v-if="data?.tracker_error" class="rounded-md bg-red-50 p-3 text-sm text-red-800">
       Tracker could not be read: {{ data.tracker_error }}
@@ -95,12 +97,38 @@ const outcomeCls: Record<string, string> = {
           </tr>
         </thead>
         <tbody>
-          <tr v-if="!data || !data.sessions.length">
+          <tr v-if="!sessions.length">
             <td colspan="7" class="px-3 py-6 text-center text-slate-500">{{ loading ? 'Loading…' : 'No applications yet.' }}</td>
           </tr>
-          <tr v-for="s in data?.sessions ?? []" :key="s.folder" class="application-row border-t border-slate-200" :style="rowColorStyle(s.row)">
+          <tr v-for="s in sessions" :key="s.folder" class="application-row border-t border-slate-200" :style="rowColorStyle(s.row)">
             <td class="px-3 py-2 font-medium">{{ s.row?.Organization ?? '—' }}</td>
-            <td class="px-3 py-2">{{ s.row?.Position_Title ?? '—' }}</td>
+            <td class="px-3 py-2">
+              {{ s.row?.Position_Title ?? '—' }}
+              <a
+                v-if="s.postingHref"
+                :href="s.postingHref"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="application-row-link ml-1 inline-flex size-6 items-center justify-center rounded align-middle hover:bg-black/10 focus-visible:outline-2"
+                title="Open posting in a new tab"
+                aria-label="Open posting in a new tab"
+              >
+                <svg
+                  class="size-4"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M15 3h6v6" />
+                  <path d="m12 12 9-9" />
+                  <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                </svg>
+              </a>
+            </td>
             <td class="px-3 py-2 text-center align-middle">
               <span v-if="s.row?.Application_Status" class="chip justify-center text-center" :class="statusCls[String(s.row.Application_Status)] ?? 'bg-slate-100'">{{ s.row.Application_Status }}</span>
               <span v-else-if="!s.row" class="chip justify-center text-center bg-amber-100 text-amber-800" title="No row in the tracker for this folder">no row</span>

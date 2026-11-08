@@ -1,6 +1,5 @@
 <script setup lang="ts">
-// Floating right-side dock for Application_Status / Applied_Through / Found_From
-// dropdown sync. Minimized = sync icon only; maximized = per-column diffs.
+// Shared page-header sync control. Floats only while differences need attention.
 import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue'
 import { api, type DropdownColumnDiff } from '../api/client'
 import { useAppStore } from '../stores/app'
@@ -8,7 +7,6 @@ import { errorText } from '../utils'
 import excelOk from '../img/excel-icon-green.png'
 
 const EDITABLE = ['Application_Status', 'Applied_Through', 'Found_From'] as const
-const props = defineProps<{ dashboard?: boolean }>()
 const anchor = ref<HTMLElement | null>(null)
 const panel = ref<HTMLElement | null>(null)
 const controls = ref<HTMLElement | null>(null)
@@ -28,21 +26,21 @@ const syncTone = computed<'locked' | 'differs' | 'ok'>(() => {
 })
 
 const syncEnabled = computed(() => syncTone.value !== 'locked' && !syncing.value)
-const floating = computed(() => props.dashboard && aboveViewport.value && syncTone.value === 'differs')
+const floating = computed(() => aboveViewport.value && syncTone.value === 'differs')
 
 watch(syncTone, (tone) => {
-  if (props.dashboard && tone === 'differs') expanded.value = true
+  if (tone === 'differs') expanded.value = true
 })
 
 function updatePosition() {
   if (!anchor.value) return
   const rect = anchor.value.getBoundingClientRect()
-  aboveViewport.value = rect.top + (controls.value?.getBoundingClientRect().height ?? 32) <= 16
-  floatingRight.value = Math.max(16, window.innerWidth - rect.right)
+  const navbarOffset = parseFloat(getComputedStyle(anchor.value).getPropertyValue('--navbar-offset')) || 0
+  aboveViewport.value = rect.top + (controls.value?.getBoundingClientRect().height ?? 32) <= navbarOffset + 16
+  floatingRight.value = Math.max(16, document.documentElement.clientWidth - rect.right)
 }
 
 onMounted(() => {
-  if (!props.dashboard) return
   if (syncTone.value === 'differs') expanded.value = true
   observer = new ResizeObserver(() => {
     if (panel.value) panelHeight.value = panel.value.getBoundingClientRect().height
@@ -148,8 +146,8 @@ function joinList(values: string[]) {
 <template>
   <div
     ref="anchor"
-    :class="props.dashboard ? 'shrink-0 transition-[width] duration-300 ease-in-out motion-reduce:transition-none' : 'sticky top-4 shrink-0'"
-    :style="props.dashboard ? { width: expanded ? '18rem' : '5.75rem', height: floating ? `${panelHeight}px` : undefined } : { top: 'calc(var(--navbar-offset, 0px) + 16px)' }"
+    class="shrink-0 transition-[width] duration-300 ease-in-out motion-reduce:transition-none"
+    :style="{ width: expanded ? '18rem' : '5.75rem', height: floating ? `${panelHeight}px` : undefined }"
   >
   <!-- Numeric widths only (not w-auto) so width+flex neighbor can ease smoothly.
        Chrome stays right-aligned so sync/min-max keep the same screen position. -->

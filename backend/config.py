@@ -9,6 +9,7 @@ import json
 import os
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
@@ -30,9 +31,18 @@ class JevSettings(BaseModel):
 
 
 class LLMSettings(BaseModel):
+    extract_provider: Literal["anthropic", "openai"] = "anthropic"
     extract_model: str = "claude-haiku-5-5"
     qa_model: str = "claude-haiku-5-5"
     effort: str = "low"
+    max_tokens: int = 2048
+    token_warn: int = 80_000
+
+
+class OpenAISettings(BaseModel):
+    extract_model: str = "gpt-6-luna"
+    qa_model: str = "gpt-6-luna"
+    effort: str = "none"
     max_tokens: int = 2048
     token_warn: int = 80_000
 
@@ -49,11 +59,16 @@ class Settings(BaseModel):
     candidate_context_path: Path = Path("JobHunting/candidate_context.txt")
     jev: JevSettings = Field(default_factory=JevSettings)
     llm: LLMSettings = Field(default_factory=LLMSettings)
+    openai: OpenAISettings = Field(default_factory=OpenAISettings)
     files: FileSettings = Field(default_factory=FileSettings)
     backups_keep: int = 10
     # Editable dropdown lists (Application_Status, Applied_Through, Found_From).
     # Absent keys fall back to shipped defaults in columns.DEFAULT_OPTIONS.
     options: dict[str, list[str]] = Field(default_factory=dict)
+
+    @property
+    def selected_llm(self) -> LLMSettings | OpenAISettings:
+        return self.openai if self.llm.extract_provider == "openai" else self.llm
 
     def _abs(self, p: Path) -> Path:
         return p if p.is_absolute() else (REPO_ROOT / p).resolve()

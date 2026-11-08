@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { api, type DiffEntry, type FilesView, type QAView, type ReextractResponse, type Row, type RowValue, type SessionDetail } from '../api/client'
 import FieldInput from '../components/FieldInput.vue'
 import FilesPanel from '../components/FilesPanel.vue'
 import JevPanel from '../components/JevPanel.vue'
 import QaPanel from '../components/QaPanel.vue'
+import PageHeader from '../components/PageHeader.vue'
 import { useAppStore } from '../stores/app'
 import { cleanPostingText, errorText, fmtDate, todayIso } from '../utils'
 
@@ -19,6 +20,11 @@ const saving = ref(false)
 const tab = ref<'overview' | 'files' | 'questions' | 'notes' | 'log'>('overview')
 const showPosting = ref(false)
 const cleanedPosting = computed(() => cleanPostingText(detail.value?.session.posting.text ?? ''))
+const postingDraft = ref<string | null>(null)
+const postingEditor = ref<HTMLTextAreaElement | null>(null)
+const postingSaving = ref(false)
+const offerReextract = ref(false)
+const canSavePosting = computed(() => Boolean(postingDraft.value?.trim()) && postingDraft.value !== detail.value?.session.posting.text)
 const notesDraft = ref('')
 let notesTimer: ReturnType<typeof setTimeout> | null = null
 let notesSeq = 0
@@ -77,7 +83,12 @@ async function load() {
   }
 }
 onMounted(load)
-watch(() => props.folder, load)
+watch(() => props.folder, () => {
+  postingDraft.value = null
+  offerReextract.value = false
+  reResult.value = null
+  void load()
+})
 
 async function save() {
   if (!dirty.value.length) return
@@ -181,16 +192,21 @@ async function confirmDuplicate() {
 const reextracting = ref(false)
 const reUseJev = ref(true)
 const reUseLlm = ref(true)
+const reextractPanel = ref<HTMLElement | null>(null)
 const reResult = ref<ReextractResponse | null>(null)
 const reSelected = reactive<Record<string, boolean>>({})
 const reChanged = computed(() => reResult.value?.diff.filter((d) => d.changed) ?? [])
 const reChosen = computed(() => reChanged.value.filter((d) => reSelected[d.column]))
 
 async function reextract() {
+  const folder = props.folder
+  if (detail.value?.session.folder !== folder || postingDraft.value !== null) return
   reextracting.value = true
   reResult.value = null
   try {
-    const r = await api.reextract(props.folder, reUseJev.value, reUseLlm.value)
+    const r = await api.reextract(folder, reUseJev.value, reUseLlm.value)
+    if (folder !== props.folder) return
+    offerReextract.value = false
     reResult.value = r
     for (const k of Object.keys(reSelected)) delete reSelected[k]
     for (const d of r.diff) if (d.changed) reSelected[d.column] = true
@@ -226,6 +242,38 @@ async function applyReextract() {
 }
 
 const cell = (v: DiffEntry['current']) => (v === null || v === undefined || v === '' ? '—' : String(v))
+
+async function editPosting() {
+  if (detail.value?.session.folder !== props.folder) return
+  postingDraft.value = detail.value.session.posting.text
+  showPosting.value = true
+  await nextTick()
+  postingEditor.value?.focus()
+}
+
+async function savePosting() {
+  const folder = props.folder
+  const text = postingDraft.value
+  if (text === null || !canSavePosting.value || postingSaving.value || detail.value?.session.folder !== folder) return
+  postingSaving.value = true
+  try {
+    const posting = await api.setSessionPosting(folder, text)
+    if (props.folder !== folder || detail.value?.session.folder !== folder) return
+    detail.value.session.posting = posting
+    postingDraft.value = null
+    reResult.value = null
+    offerReextract.value = true
+  } catch (e) {
+    app.toast(errorText(e), 'error', 10000)
+  } finally {
+    postingSaving.value = false
+  }
+}
+
+function reextractUpdatedPosting() {
+  reextractPanel.value?.scrollIntoView({ block: 'nearest' })
+  void reextract()
+}
 
 async function copyPosting() {
   try {
@@ -272,19 +320,19 @@ const pretty = (o: unknown) => JSON.stringify(o, null, 2)
 
 <template>
   <div v-if="detail" class="space-y-4">
-    <div class="flex flex-wrap items-start justify-between gap-2">
-      <div>
+    <PageHeader>
+      <template #default>
         <h1 class="font-mono text-lg font-semibold">{{ folder }}</h1>
         <p class="text-xs text-slate-500">
           created {{ fmtDate(detail.session.created_at) }} · upload mode <span class="font-mono">{{ detail.session.upload_mode }}</span>
           <span v-if="detail.session.review.written_at"> · last Excel write {{ detail.session.review.written_at.slice(0, 16).replace('T', ' ') }}</span>
         </p>
-      </div>
-      <div class="flex flex-wrap gap-2">
-        <button class="btn-secondary" :disabled="duplicating || app.trackerLocked" :title="app.trackerLocked ? 'Close Excel first' : undefined" @click="openDuplicate">Duplicate…</button>
-        <button class="btn-secondary" @click="copyPath" title="Copy folder path">Copy path</button>
-      </div>
-    </div>
+      </template>
+      <template #actions>
+        <button class="btn-secondary toolbar-control" :disabled="duplicating || app.trackerLocked" :title="app.trackerLocked ? 'Close Excel first' : undefined" @click="openDuplicate">Duplicate…</button>
+        <button class="btn-secondary toolbar-control" @click="copyPath" title="Copy folder path">Copy path</button>
+      </template>
+    </PageHeader>
 
     <div v-if="showDuplicate" class="card space-y-3 border-indigo-200">
       <div class="flex items-baseline justify-between gap-2">
@@ -302,7 +350,7 @@ const pretty = (o: unknown) => JSON.stringify(o, null, 2)
 
     <div v-if="detail.session.review.pending_write" class="flex items-center justify-between rounded-md bg-amber-50 p-3 text-sm text-amber-900">
       <span>Excel write pending for: <span class="font-mono">{{ Object.keys(detail.session.review.pending_write.values).join(', ') }}</span>. Close Excel, then retry.</span>
-      <button class="btn-primary" :disabled="saving || app.trackerLocked" :title="app.trackerLocked ? 'Close Excel first' : undefined" @click="retry">Retry</button>
+      <button class="btn-primary" :disabled="saving || postingSaving || app.trackerLocked" :title="app.trackerLocked ? 'Close Excel first' : undefined" @click="retry">Retry</button>
     </div>
     <div v-if="detail.row_error" class="rounded-md bg-red-50 p-3 text-sm text-red-800">Tracker could not be read: {{ detail.row_error }}</div>
     <div v-else-if="!detail.row" class="rounded-md bg-amber-50 p-3 text-sm text-amber-900">No row in the tracker for this folder yet. Saving will create one.</div>
@@ -315,7 +363,7 @@ const pretty = (o: unknown) => JSON.stringify(o, null, 2)
       <div class="card space-y-3">
         <div class="flex items-baseline justify-between">
           <h3 class="font-semibold">Tracker row <span class="text-xs font-normal text-slate-500">(values read from Excel; your edits overwrite)</span></h3>
-          <button class="btn-primary" :disabled="saving || !dirty.length || app.trackerLocked" :title="app.trackerLocked ? 'Close Excel first' : undefined" @click="save">{{ saving ? 'Saving…' : `Save ${dirty.length ? `(${dirty.length})` : ''}` }}</button>
+          <button class="btn-primary" :disabled="saving || postingSaving || !dirty.length || app.trackerLocked" :title="app.trackerLocked ? 'Close Excel first' : undefined" @click="save">{{ saving ? 'Saving…' : `Save ${dirty.length ? `(${dirty.length})` : ''}` }}</button>
         </div>
         <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <FieldInput
@@ -331,13 +379,13 @@ const pretty = (o: unknown) => JSON.stringify(o, null, 2)
         </div>
       </div>
 
-      <div class="card space-y-3">
+      <div ref="reextractPanel" class="card space-y-3">
         <div class="flex flex-wrap items-center justify-between gap-2">
-          <h3 class="font-semibold">Re-extract <span class="text-xs font-normal text-slate-500">(runs Jev/LLM on the stored posting; nothing is written until you apply)</span></h3>
+          <h3 class="font-semibold">Re-extract <span class="text-xs font-normal text-slate-500">(run the selected services on the stored posting, then review differences)</span></h3>
           <div class="flex items-center gap-3 text-sm">
             <label class="flex items-center gap-1"><input v-model="reUseJev" type="checkbox" /> Jev</label>
-            <label class="flex items-center gap-1"><input v-model="reUseLlm" type="checkbox" /> LLM</label>
-            <button class="btn-secondary" :disabled="reextracting || saving" @click="reextract">{{ reextracting ? 'Extracting…' : 'Re-extract' }}</button>
+            <label class="flex items-center gap-1"><input v-model="reUseLlm" type="checkbox" /> {{ app.modelProviderLabel }}</label>
+            <button class="btn-secondary" :disabled="reextracting || saving || postingDraft !== null" @click="reextract">{{ reextracting ? 'Extracting…' : 'Re-extract' }}</button>
           </div>
         </div>
         <template v-if="reResult">
@@ -358,18 +406,40 @@ const pretty = (o: unknown) => JSON.stringify(o, null, 2)
             </table>
             <div class="flex items-center justify-end gap-3">
               <span class="text-xs text-slate-500">Selected columns overwrite the tracker cell.</span>
-              <button class="btn-primary" :disabled="saving || !reChosen.length || app.trackerLocked" :title="app.trackerLocked ? 'Close Excel first' : undefined" @click="applyReextract">Apply {{ reChosen.length ? `(${reChosen.length})` : '' }}</button>
+              <button class="btn-primary" :disabled="saving || postingDraft !== null || !reChosen.length || app.trackerLocked" :title="app.trackerLocked ? 'Close Excel first' : undefined" @click="applyReextract">Apply {{ reChosen.length ? `(${reChosen.length})` : '' }}</button>
             </div>
           </template>
         </template>
       </div>
 
       <div class="card space-y-2">
-        <div class="flex items-center justify-between gap-2">
-          <button class="text-sm font-semibold" @click="showPosting = !showPosting">{{ showPosting ? '▾' : '▸' }} Posting text<span v-if="detail.session.posting.url" class="ml-2 text-xs font-normal text-slate-500">{{ detail.session.posting.url }}</span></button>
-          <button type="button" class="btn-secondary" @click="copyPosting">Copy all</button>
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <button type="button" class="text-sm font-semibold" :aria-expanded="showPosting" :disabled="postingDraft !== null" @click="showPosting = !showPosting">{{ showPosting ? '▾' : '▸' }} Posting text<span v-if="detail.session.posting.url" class="ml-2 text-xs font-normal text-slate-500">{{ detail.session.posting.url }}</span></button>
+          <div v-if="postingDraft === null" class="flex gap-2">
+            <button type="button" class="btn-secondary" :disabled="reextracting || postingSaving" @click="editPosting">Edit posting</button>
+            <button type="button" class="btn-secondary" @click="copyPosting">Copy all</button>
+          </div>
         </div>
-        <pre v-if="showPosting" class="max-h-96 overflow-auto whitespace-pre-wrap rounded bg-slate-50 p-3 text-xs">{{ cleanedPosting }}</pre>
+        <form v-if="postingDraft !== null" class="space-y-2" @submit.prevent="savePosting">
+          <label class="block">
+            <span class="label">Edit posting text</span>
+            <textarea ref="postingEditor" v-model="postingDraft" rows="12" class="input resize-y font-mono text-xs" :readonly="postingSaving" required />
+          </label>
+          <div class="flex justify-end gap-2">
+            <button type="button" class="btn-secondary" :disabled="postingSaving" @click="postingDraft = null">Cancel</button>
+            <button type="submit" class="btn-primary" :disabled="!canSavePosting || postingSaving || saving">{{ postingSaving ? 'Saving…' : 'Save posting' }}</button>
+          </div>
+        </form>
+        <template v-else>
+          <div v-if="offerReextract" class="flex flex-wrap items-center justify-between gap-2 rounded-md bg-indigo-50 p-3 text-sm text-indigo-900">
+            <p role="status">Posting saved. Re-extract to review possible updates to the tracker fields.</p>
+            <div class="flex gap-2">
+              <button type="button" class="btn-primary" :disabled="reextracting || saving" @click="reextractUpdatedPosting">Re-extract now</button>
+              <button type="button" class="btn-secondary" @click="offerReextract = false">Dismiss</button>
+            </div>
+          </div>
+          <pre v-if="showPosting" class="max-h-96 overflow-auto whitespace-pre-wrap rounded bg-slate-50 p-3 text-xs">{{ cleanedPosting }}</pre>
+        </template>
       </div>
     </section>
 
@@ -404,5 +474,8 @@ const pretty = (o: unknown) => JSON.stringify(o, null, 2)
       </div>
     </section>
   </div>
-  <div v-else class="text-sm text-slate-500">{{ loading ? 'Loading…' : 'Session not found.' }}</div>
+  <div v-else class="space-y-4">
+    <PageHeader title="Application" />
+    <p class="text-sm text-slate-500">{{ loading ? 'Loading…' : 'Session not found.' }}</p>
+  </div>
 </template>

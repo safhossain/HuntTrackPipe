@@ -7,6 +7,7 @@ from the UI; Excel list validations are synced from the resolved lists.
 """
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 
 from .jev.questions import EMPLOYMENT_TYPE_VALUES, ROLE_CATEGORY_VALUES, WORK_MODE_VALUES
@@ -77,14 +78,18 @@ DEFAULT_OPTIONS: dict[str, list[str]] = {
 OPTIONS = DEFAULT_OPTIONS
 
 
+def _dropdown_order(values: Iterable[str]) -> list[str]:
+    return sorted(values, key=lambda value: (value.casefold() == "other", value.casefold()))
+
+
 def resolved_options(cfg_options: dict[str, list[str]] | None = None) -> dict[str, list[str]]:
-    """Shipped defaults, with editable columns overridden by config when present."""
-    out = {k: list(v) for k, v in DEFAULT_OPTIONS.items()}
+    """Alphabetized dropdowns with config overrides and Other at the end."""
+    out = dict(DEFAULT_OPTIONS)
     if cfg_options:
         for key in EDITABLE_OPTION_COLUMNS:
             if key in cfg_options and cfg_options[key] is not None:
-                out[key] = list(cfg_options[key])
-    return out
+                out[key] = cfg_options[key]
+    return {key: _dropdown_order(values) for key, values in out.items()}
 
 
 def editable_list_options(cfg: Settings) -> dict[str, list[str]]:
@@ -108,7 +113,7 @@ def meta_payload(cfg: Settings | None = None) -> dict[str, Any]:
         "date_columns": list(DATE_COLUMNS),
         "options": resolved_options(cfg_options),
         "editable_option_columns": list(EDITABLE_OPTION_COLUMNS),
-        "doc_types": list(DOC_TYPES),
+        "doc_types": _dropdown_order(DOC_TYPES),
         "upload_modes": ["single_document", "separate_uploads", "single_combined_file", "not_stated"],
     }
 

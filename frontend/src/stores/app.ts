@@ -21,6 +21,8 @@ export const useAppStore = defineStore('app', () => {
 
   const trackerLocked = computed(() => Boolean(trackerStatus.value?.locked))
   const suggestSync = computed(() => Boolean(trackerStatus.value?.suggest_sync))
+  const modelProvider = computed(() => settings.value?.config.llm?.extract_provider ?? 'anthropic')
+  const modelProviderLabel = computed(() => modelProvider.value === 'openai' ? 'OpenAI' : 'Claude')
 
   async function refreshTrackerStatus(force = false) {
     try {
@@ -84,6 +86,8 @@ export const useAppStore = defineStore('app', () => {
     trackerStatus,
     trackerLocked,
     suggestSync,
+    modelProvider,
+    modelProviderLabel,
     toasts,
     bootstrap,
     refreshTrackerStatus,

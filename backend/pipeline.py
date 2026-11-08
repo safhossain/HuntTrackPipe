@@ -1,6 +1,6 @@
 """End-to-end steps shared by the CLI and (later) the API.
 
-posting -> Jev -> derive -> schema -> Claude -> row values -> folder + session + Excel row
+posting -> Jev -> derive -> schema -> LLM -> row values -> folder + session + Excel row
 """
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ from .jev.questions import (
     QUESTIONS,
     ROLE_CATEGORY_VALUES,
 )
-from .llm.client import ClaudeClient
+from .llm.client import selected_client
 from .llm.postprocess import row_values
 from .llm.prompts import EXTRACTION_SYSTEM
 from .llm.schema_builder import build_schema
@@ -65,9 +65,8 @@ def run_jev(posting_text: str, cfg: Settings) -> JevRecord:
 
 def run_llm(posting_text: str, derived: JevDerived, cfg: Settings) -> LLMRecord:
     schema = build_schema(derived)
-    client = ClaudeClient(cfg.llm)
-    res = client.structured(
-        model=cfg.llm.extract_model,
+    res = selected_client(cfg).structured(
+        model=cfg.selected_llm.extract_model,
         system=EXTRACTION_SYSTEM,
         user=f"<job_posting>\n{posting_text}\n</job_posting>",
         schema=schema,

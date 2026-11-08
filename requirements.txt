@@ -7,7 +7,8 @@ pydantic>=2
 python-dotenv
 httpx
 anthropic
-openpyxl
+openai
+openpyxl>=3.1
 watchdog
 # Files (convert / combine / thumbnails). docx -> pdf also needs LibreOffice on PATH.
 pymupdf

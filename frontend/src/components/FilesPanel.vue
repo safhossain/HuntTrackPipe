@@ -26,6 +26,8 @@ const finalsHighlight = computed(() => view.value?.upload_mode === 'separate_upl
 const candidate = computed(() => (view.value?.candidate ?? 'Candidate').trim().replace(/\s+/g, '-'))
 const combinedName = computed(() => (view.value ? `${candidate.value}_${view.value.x}.pdf` : ''))
 const convertTargets = computed(() => view.value?.tools.targets ?? ['pdf', 'docx', 'png', 'jpg'])
+const uploadModes = computed(() => [...(app.meta?.upload_modes ?? Object.keys(UPLOAD_MODE_LABELS))]
+  .sort((a, b) => (UPLOAD_MODE_LABELS[a] ?? a).localeCompare(UPLOAD_MODE_LABELS[b] ?? b)))
 
 function finalName(i: InputFile) {
   if (!view.value || !i.doc_type) return ''
@@ -160,7 +162,7 @@ const fromLabel = (idx: number | null) => (idx === null ? 'source removed' : (in
       <label class="flex items-center gap-2">
         <span class="label mb-0">Upload mode</span>
         <select class="input w-auto" :value="view.upload_mode" :disabled="!!busy" @change="setMode(($event.target as HTMLSelectElement).value)">
-          <option v-for="m in app.meta?.upload_modes ?? Object.keys(UPLOAD_MODE_LABELS)" :key="m" :value="m">{{ UPLOAD_MODE_LABELS[m] ?? m }}</option>
+          <option v-for="m in uploadModes" :key="m" :value="m">{{ UPLOAD_MODE_LABELS[m] ?? m }}</option>
         </select>
         <span class="text-xs text-slate-500">{{ view.upload_mode_source === 'jev' ? 'from Jev' : 'your override' }}</span>
       </label>

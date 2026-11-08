@@ -3,9 +3,10 @@ from datetime import date
 
 import pytest
 
+from backend.columns import meta_payload
 from backend.config import JevSettings
 from backend.jev.derive import derive
-from backend.jev.questions import EXISTENCE, QUESTIONS
+from backend.jev.questions import EXISTENCE, QUESTIONS, ROLE_CATEGORY_VALUES
 from backend.llm.postprocess import row_values
 from backend.llm.schema_builder import FIELD_TO_COLUMN, build_schema
 from backend.pipeline import derived_without_jev
@@ -39,6 +40,9 @@ def test_question_set_shape():
     assert set(QUESTIONS) >= set(EXISTENCE) | {"work_mode", "employment_type", "upload_mode", "is_job_posting"}
     for q in QUESTIONS.values():
         assert q["type"] in ("noul", "choice") and q["instructions"] and q["criteria"]
+    assert QUESTIONS["role_category"]["criteria"].keys() == ROLE_CATEGORY_VALUES.keys()
+    assert ROLE_CATEGORY_VALUES["game_engines"] == "Game Engines"
+    assert "Game Engines" in meta_payload()["options"]["Role_Category"]
 
 
 def test_derive_gates_fields_and_choices():

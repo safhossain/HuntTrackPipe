@@ -1,4 +1,4 @@
-import { ApiError } from './api/client'
+import { ApiError, type RowValue } from './api/client'
 
 export { outcomeLabel } from './applicationColors'
 
@@ -28,6 +28,21 @@ export function todayIso(): string {
 export function fmtDate(v: string | number | null | undefined): string {
   if (v === null || v === undefined || v === '') return ''
   return typeof v === 'string' ? v.slice(0, 10) : String(v)
+}
+
+export function postingUrlHref(value: RowValue | undefined): string {
+  if (typeof value !== 'string') return ''
+  const raw = value.trim()
+  if (!raw) return ''
+  const withScheme = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`
+  try {
+    const url = new URL(withScheme)
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return ''
+    if (!url.hostname.includes('.')) return ''
+    return url.href
+  } catch {
+    return ''
+  }
 }
 
 export function pct(p: number | null | undefined): string {

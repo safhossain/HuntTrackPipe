@@ -1,7 +1,12 @@
-"""API smoke tests with FastAPI's TestClient. Jev / Claude are replaced by fakes."""
+"""API smoke tests with FastAPI's TestClient and fake provider responses."""
 import json
+import subprocess
+import sys
 from datetime import date
+from hashlib import sha256
+from types import SimpleNamespace
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -9,9 +14,11 @@ from backend import config as config_mod
 from backend.api.routers import extract as extract_router
 from backend.api.routers import qa as qa_router
 from backend.api.routers import sessions as sessions_router
+from backend.duplicates import posting_hash
 from backend.llm.client import LLMResult
 from backend.main import app
 from backend.pipeline import Extraction
+from backend.sessions import store as session_store
 from backend.sessions.models import JevDerived, JevRecord, LLMRecord
 
 from .conftest import POSTING, sample_extraction
@@ -41,6 +48,27 @@ def _payload(client, text=POSTING, **manual) -> dict:
     return {"posting_text": text, "posting_url": "https://jobs.example/1", "extraction": ex, "manual": manual}
 
 
+def _credit_after_restart(provider):
+    code = (
+        "from backend.config import settings\n"
+        f"from backend.llm.client import {provider}_credit_low\n"
+        f"print({provider}_credit_low(settings()))"
+    )
+    return subprocess.check_output(
+        [sys.executable, "-c", code],
+        cwd=config_mod.REPO_ROOT,
+        text=True,
+        timeout=10,
+    ).strip()
+
+
+def _openai_rate_limit(code):
+    from openai import RateLimitError
+
+    response = httpx.Response(429, request=httpx.Request("POST", "https://api.openai.com/v1/responses"))
+    return RateLimitError(code, response=response, body={"code": code, "type": "insufficient_quota"})
+
+
 def test_health_meta_settings(client):
     assert client.get("/api/health").json()["ok"] is True
     meta = client.get("/api/meta").json()
@@ -49,12 +77,207 @@ def test_health_meta_settings(client):
     assert "LinkedIn" in meta["options"]["Applied_Through"]
     s = client.get("/api/settings").json()
     assert s["config"]["candidate_name"] == "Test Candidate" and s["tracker_exists"] is True
-    assert set(s["keys"]) == {"TYPESAFE_API_KEY", "ANTHROPIC_API_KEY"}
+    assert set(s["keys"]) == {"TYPESAFE_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"}
+    assert s["config"]["llm"]["extract_provider"] == "anthropic"
+    assert s["config"]["openai"]["qa_model"] == "gpt-6-luna"
     assert s["paths"]["config_path"].endswith("htp.config.json")
 
 
 def test_extract_rejects_empty(client):
     assert client.post("/api/extract", json={"posting_text": "  "}).status_code == 400
+
+
+def test_claude_credit_status_survives_restart_and_recovery(client, env, session, monkeypatch):
+    import anthropic
+
+    key_name = "ANTHROPIC_API_KEY"
+    key = "test-claude-key-with-low-credit"
+    low_credit_message = "Your credit balance is too low to access the Anthropic API."
+    monkeypatch.setenv(key_name, key)
+    fingerprint = sha256(key.encode("utf-8")).hexdigest()
+    marker = env.applications_abs / ".htp_state" / f"claude-low-credit-{fingerprint}"
+    calls = []
+    failure = None
+
+    def provider_error(status, message):
+        response = httpx.Response(status, request=httpx.Request("POST", "https://api.anthropic.com/v1/messages"))
+        return anthropic.APIStatusError(message, response=response, body={"error": {"message": message}})
+
+    def create(**kwargs):
+        calls.append(kwargs["model"])
+        if failure is not None:
+            raise failure
+        ids = kwargs["output_config"]["format"]["schema"]["properties"]["answers"]["items"]["properties"]["id"]["enum"]
+        text = json.dumps({"answers": [{"id": qid, "answer": "I built a job tracker."} for qid in ids]})
+        return SimpleNamespace(content=[SimpleNamespace(type="text", text=text)])
+
+    monkeypatch.setattr(anthropic, "Anthropic", lambda **_: SimpleNamespace(messages=SimpleNamespace(create=create)))
+
+    def credit_low():
+        return client.get("/api/tracker/status").json()["claude_credit_low"]
+
+    def extract():
+        return client.post("/api/extract", json={"posting_text": POSTING, "use_jev": False})
+
+    assert credit_low() is False and calls == []
+    for status, message in [(400, "Invalid structured output schema."), (429, low_credit_message)]:
+        failure = provider_error(status, message)
+        assert extract().status_code == 502
+        assert credit_low() is False
+
+    failure = provider_error(400, low_credit_message)
+    response = extract()
+    assert response.status_code == 502 and low_credit_message in response.json()["detail"]
+    assert credit_low() is True
+    assert client.get("/api/settings").json()["tracker_status"]["claude_credit_low"] is True
+    assert marker.read_bytes() == b""
+    assert _credit_after_restart("claude") == "True"
+    assert len(calls) == 6  # each failure gets the existing retry; status reads make no calls
+
+    failure = provider_error(429, "Rate limit reached.")
+    assert extract().status_code == 502 and credit_low() is True
+    with monkeypatch.context() as patch:
+        patch.setenv(key_name, "test-other-claude-key")
+        assert credit_low() is False
+        patch.delenv(key_name)
+        assert credit_low() is False
+    assert credit_low() is True
+
+    failure = None
+    qa_url = f"/api/sessions/{session.folder}/qa"
+    assert client.post(f"{qa_url}/questions", json={"questions": [{"text": "What did you build?"}]}).status_code == 200
+    assert client.post(f"{qa_url}/answer", json={}).status_code == 200
+    assert credit_low() is False
+    assert not marker.exists()
+    assert _credit_after_restart("claude") == "False"
+
+
+def test_openai_extraction_and_credit_status(client, session, monkeypatch):
+    import anthropic
+    import openai
+
+    monkeypatch.setenv("OPENAI_API_KEY", "test-openai-key")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-anthropic-key")
+    openai_calls, claude_calls = [], []
+    failure = None
+
+    def openai_create(**kwargs):
+        openai_calls.append(kwargs)
+        if failure is not None:
+            raise failure
+        fields = kwargs["text"]["format"]["schema"]["required"]
+        output = {**dict.fromkeys(fields), "organization": "OpenAI extracted", "subrole_categories": ["FastAPI"]}
+        usage = SimpleNamespace(input_tokens=120, output_tokens=28)
+        return SimpleNamespace(model="gpt-6-luna-snapshot", status="completed", output_text=json.dumps(output), usage=usage)
+
+    def claude_create(**kwargs):
+        claude_calls.append(kwargs["model"])
+        pytest.fail("OpenAI was selected for extraction")
+
+    monkeypatch.setattr(openai, "OpenAI", lambda **_: SimpleNamespace(responses=SimpleNamespace(create=openai_create)))
+    monkeypatch.setattr(anthropic, "Anthropic", lambda **_: SimpleNamespace(messages=SimpleNamespace(create=claude_create)))
+
+    def extract():
+        return client.post("/api/extract", json={"posting_text": POSTING, "use_jev": False})
+
+    settings = client.put("/api/settings", json={"config": {"llm": {"extract_provider": "openai"}}})
+    assert settings.status_code == 200, settings.text
+    assert settings.json()["keys"]["OPENAI_API_KEY"] is True
+    assert settings.json()["tracker_status"]["openai_credit_low"] is False
+
+    response = extract()
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert result["values"]["Organization"] == "OpenAI extracted"
+    assert result["values"]["Subrole_Categories"] == "FastAPI"
+    assert result["llm"]["model"] == "gpt-6-luna-snapshot"
+    assert result["llm"]["usage"] == {"input_tokens": 120, "output_tokens": 28}
+    request, = openai_calls
+    assert request["model"] == "gpt-6-luna" and request["reasoning"] == {"effort": "none"}
+    assert request["max_output_tokens"] == 2048 and request["store"] is False
+    assert request["text"]["format"] == {
+        "type": "json_schema", "name": "structured_output", "schema": result["llm"]["schema"], "strict": True,
+    }
+    assert POSTING.strip() in request["input"] and claude_calls == []
+
+    failure = _openai_rate_limit("insufficient_quota")
+    assert extract().status_code == 502
+    assert client.get("/api/tracker/status").json()["openai_credit_low"] is False
+
+    failure = _openai_rate_limit("credit_balance_exhausted")
+    assert extract().status_code == 502
+    status = client.get("/api/tracker/status").json()
+    assert status["openai_credit_low"] is True and status["claude_credit_low"] is False
+    assert len(openai_calls) == 4  # ordinary failure retries; credit depletion does not
+    assert _credit_after_restart("openai") == "True"
+
+    failure = None
+    reextract = client.post(f"/api/sessions/{session.folder}/reextract", json={"use_jev": False})
+    assert reextract.status_code == 200, reextract.text
+    assert reextract.json()["extraction"]["values"]["Organization"] == "OpenAI extracted"
+    assert client.get("/api/tracker/status").json()["openai_credit_low"] is False
+    assert _credit_after_restart("openai") == "False"
+
+
+def test_openai_qa_batches_checks_limits_and_regenerates(client, session, monkeypatch):
+    import anthropic
+    import openai
+
+    monkeypatch.setenv("OPENAI_API_KEY", "test-openai-qa-key")
+    monkeypatch.setattr(anthropic, "Anthropic", lambda **_: pytest.fail("OpenAI was selected for Q&A"))
+    calls = []
+    failure = _openai_rate_limit("credit_balance_exhausted")
+
+    def create(**kwargs):
+        if failure is not None:
+            raise failure
+        output_format = kwargs["text"]["format"]
+        ids = output_format["schema"]["properties"]["answers"]["items"]["properties"]["id"]["enum"]
+        calls.append((kwargs, ids))
+        if len(ids) == 2:
+            answers = ["I built the tracker.", "Immediately."]
+        elif "revision feedback" in kwargs["input"]:
+            answers = ["I tested it."]
+        else:
+            answers = ["I built it."]
+        output = {"answers": [{"id": qid, "answer": answer} for qid, answer in zip(ids, answers)]}
+        usage = SimpleNamespace(input_tokens=30, output_tokens=10)
+        return SimpleNamespace(model=kwargs["model"], status="completed", output_text=json.dumps(output), usage=usage)
+
+    monkeypatch.setattr(openai, "OpenAI", lambda **_: SimpleNamespace(responses=SimpleNamespace(create=create)))
+    response = client.put("/api/settings", json={"config": {
+        "llm": {"extract_provider": "openai"}, "openai": {"qa_model": "test-qa-model", "max_tokens": 512},
+    }})
+    assert response.status_code == 200, response.text
+
+    qa_url = f"/api/sessions/{session.folder}/qa"
+    response = client.post(f"{qa_url}/questions", json={"questions": [
+        {"text": "What did you build?", "limit": {"unit": "words", "value": 3}}, {"text": "When can you start?"},
+    ]})
+    ids = [q["id"] for q in response.json()["qa"]["questions"]]
+    failed = client.post(f"{qa_url}/answer", json={})
+    assert failed.status_code == 502 and failed.json()["detail"].startswith("OpenAI call failed")
+    assert client.get("/api/tracker/status").json()["openai_credit_low"] is True
+
+    failure = None
+    answered = client.post(f"{qa_url}/answer", json={})
+    assert answered.status_code == 200, answered.text
+    qa = answered.json()["qa"]
+    assert [q["answer"] for q in qa["questions"]] == ["I built it.", "Immediately."]
+    assert all(q["model"] == "test-qa-model" and q["status"] == "answered" for q in qa["questions"])
+    assert qa["usage"] == {"input_tokens": 60, "output_tokens": 20}
+    assert [target_ids for _, target_ids in calls] == [ids, ids[:1]]
+    assert [request["max_output_tokens"] for request, _ in calls] == [1824, 1424]
+    assert calls[0][0]["text"]["format"]["strict"] is True
+    assert "rewrite so it is at most 3 words" in calls[1][0]["input"]
+    assert client.get("/api/tracker/status").json()["openai_credit_low"] is False
+
+    revised = client.post(f"{qa_url}/regenerate/{ids[0]}", json={"feedback": "Mention testing."})
+    assert revised.status_code == 200, revised.text
+    qa = revised.json()["qa"]
+    assert [q["answer"] for q in qa["questions"]] == ["I tested it.", "Immediately."]
+    assert qa["usage"] == {"input_tokens": 90, "output_tokens": 30}
+    assert calls[2][1] == ids[:1] and "revision feedback from the candidate: Mention testing." in calls[2][0]["input"]
 
 
 def test_create_duplicate_and_reextract_flow(client, env, monkeypatch):
@@ -145,6 +368,72 @@ def test_locked_tracker_sets_pending_write_and_retry(client, env, monkeypatch):
     assert client.post(f"/api/sessions/{folder}/row/retry").status_code == 400
 
 
+def test_edit_posting_preserves_raw_text_and_reextracts_from_it(client, env, monkeypatch):
+    monkeypatch.setattr(extract_router, "extract", fake_extract())
+    extract_calls = []
+
+    def record_extract(text, cfg, **kwargs):
+        extract_calls.append(text)
+        return fake_extract()(text, cfg, **kwargs)
+
+    monkeypatch.setattr(sessions_router, "extract", record_extract)
+    folder = client.post("/api/sessions", json=_payload(client)).json()["session"]["folder"]
+    base = f"/api/sessions/{folder}"
+    original = client.get(base).json()
+    store = session_store.SessionStore(env.applications_abs)
+    stale = store.load(folder)
+    posting_file = env.applications_abs / folder / session_store.POSTING_FILE
+    new_text = "  Updated posting — junior engineer\n\n  Keep this indentation.\n  "
+
+    response = client.put(f"{base}/posting", json={"text": new_text})
+    assert response.status_code == 200, response.text
+    posting = {**original["session"]["posting"], "text": new_text, "hash": posting_hash(new_text)}
+    assert response.json() == posting
+    expected = {**original, "session": {**original["session"], "posting": posting}}
+    assert client.get(base).json() == expected
+    assert posting_file.read_bytes() == new_text.encode("utf-8")
+    assert extract_calls == []
+
+    assert client.put(f"{base}/posting", json={"text": " \n\t "}).status_code == 400
+    assert client.get(base).json() == expected
+    assert posting_file.read_bytes() == new_text.encode("utf-8")
+
+    outside = session_store.SessionStore(env.applications_abs.parent)
+    outside.create(stale.model_copy(update={"folder": "outside"}))
+    assert client.put("/api/sessions/..%5Coutside/posting", json={"text": new_text}).status_code == 404
+    assert outside.load("outside").posting.text == original["session"]["posting"]["text"]
+
+    stale.notes = "Saved after the posting edit."
+    store.save(stale)
+    assert client.get(base).json()["session"]["posting"] == posting
+    assert client.get(base).json()["session"]["notes"] == stale.notes
+    assert client.post(f"{base}/reextract", json={}).status_code == 200
+    assert extract_calls == [new_text]
+
+
+def test_edit_posting_restores_file_if_session_save_fails(client, env, monkeypatch):
+    monkeypatch.setattr(extract_router, "extract", fake_extract())
+    folder = client.post("/api/sessions", json=_payload(client)).json()["session"]["folder"]
+    base = f"/api/sessions/{folder}"
+    original = client.get(base).json()
+    posting_file = env.applications_abs / folder / session_store.POSTING_FILE
+    original_bytes = posting_file.read_bytes()
+    replace = session_store.os.replace
+
+    def fail_session_replace(src, dst):
+        if dst.name == session_store.SESSION_FILE:
+            raise PermissionError("Session file is locked.")
+        return replace(src, dst)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(session_store.os, "replace", fail_session_replace)
+        with pytest.raises(PermissionError, match="Session file is locked"):
+            client.put(f"{base}/posting", json={"text": "Updated posting"})
+
+    assert posting_file.read_bytes() == original_bytes
+    assert client.get(base).json() == original
+
+
 def test_files_endpoints(client, env, monkeypatch):
     monkeypatch.setattr(extract_router, "extract", fake_extract())
     folder = client.post("/api/sessions", json=_payload(client)).json()["session"]["folder"]
@@ -198,7 +487,7 @@ def test_qa_endpoints(client, env, monkeypatch):
             ids = schema["properties"]["answers"]["items"]["properties"]["id"]["enum"]
             return LLMResult(model=model, output={"answers": [{"id": i, "answer": "I am a good fit."} for i in ids]}, usage={"input_tokens": 1, "output_tokens": 1})
 
-    monkeypatch.setattr(qa_router, "ClaudeClient", FakeClaude)
+    monkeypatch.setattr(qa_router, "selected_client", FakeClaude)
 
     view = client.get(base).json()
     assert view["candidate_context_exists"] and view["organization"] == "Acme Corp" and view["qa"]["questions"] == []
@@ -238,22 +527,20 @@ def test_settings_update_and_logs(client, env):
 
 
 def test_add_option_persists_and_syncs_excel(client, env):
-    from openpyxl import load_workbook
+    from backend.excel.tracker import Tracker
 
     r = client.post("/api/meta/options/Applied_Through", json={"value": "Lever"})
     assert r.status_code == 200, r.text
     body = r.json()
+    expected = ["AshbyHQ", "Email", "Greenhouse", "Indeed", "Lever", "LinkedIn", "Org-Portal", "UltiPro", "Workday", "Other"]
     assert body["value"] == "Lever" and body["excel_synced"] is True
-    assert "Lever" in body["options"]["Applied_Through"]
+    assert body["options"]["Applied_Through"] == expected
     # First add seeds all three editable lists into config.
     on_disk = json.loads(config_mod.CONFIG_PATH.read_text(encoding="utf-8"))
     assert on_disk["options"]["Applied_Through"][-1] == "Lever"
     assert "Application_Status" in on_disk["options"] and "Found_From" in on_disk["options"]
-    assert "Lever" in client.get("/api/meta").json()["options"]["Applied_Through"]
-
-    wb = load_workbook(env.tracker_abs)
-    formulas = [dv.formula1 for dv in wb.active.data_validations.dataValidation]
-    assert any("Lever" in (f or "") for f in formulas)
+    assert client.get("/api/meta").json()["options"]["Applied_Through"] == expected
+    assert Tracker(env.tracker_abs).read_list_options(["Applied_Through"])["Applied_Through"] == expected
 
     assert client.post("/api/meta/options/Applied_Through", json={"value": "Lever"}).status_code == 409
     assert client.post("/api/meta/options/Outcome", json={"value": "Maybe"}).status_code == 400
@@ -274,13 +561,13 @@ def test_add_option_defers_excel_when_locked(client, env):
 
 
 def test_tracker_status_lock_and_dropdown_sync(client, env):
-    from backend.columns import DEFAULT_OPTIONS
+    from backend.columns import editable_list_options
     from backend.excel.tracker import Tracker
 
     # Seed Excel DVs to match HTP defaults so unlocked status is in_sync.
-    Tracker(env.tracker_abs, backups_keep=2).sync_list_validations({
-        k: list(DEFAULT_OPTIONS[k]) for k in ("Application_Status", "Applied_Through", "Found_From")
-    })
+    tracker = Tracker(env.tracker_abs, backups_keep=2)
+    options = editable_list_options(env)
+    tracker.sync_list_validations(options)
     r = client.get("/api/tracker/status?force=true")
     assert r.status_code == 200, r.text
     body = r.json()
@@ -288,8 +575,8 @@ def test_tracker_status_lock_and_dropdown_sync(client, env):
     assert body["dropdown_sync"]["status"] == "in_sync"
     assert body["suggest_sync"] is False
 
-    # Drift: change Excel only.
-    Tracker(env.tracker_abs, backups_keep=2).sync_list_validations({"Applied_Through": ["OnlyExcel"]})
+    # Drift: reorder Excel's existing options.
+    tracker.sync_list_validations({"Applied_Through": options["Applied_Through"][::-1]})
     r = client.get("/api/tracker/status?force=true")
     assert r.json()["dropdown_sync"]["status"] == "mismatched"
     assert r.json()["suggest_sync"] is True
@@ -312,3 +599,4 @@ def test_tracker_status_lock_and_dropdown_sync(client, env):
     assert r.json()["locked"] is False
     assert r.json()["dropdown_sync"]["status"] == "in_sync"
     assert r.json()["suggest_sync"] is False
+    assert tracker.read_list_options(["Applied_Through"])["Applied_Through"] == options["Applied_Through"]

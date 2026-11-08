@@ -1,4 +1,4 @@
-"""Answer application questions with one structured Claude call.
+"""Answer application questions with one structured LLM call.
 
 Inputs per call: ``candidate_context.txt`` (read fresh every time), the posting,
 organization + title, previously answered questions (for consistency) and the
@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from ..config import Settings
-from ..llm.client import ClaudeClient, LLMResult
+from ..llm.client import ClaudeClient, LLMResult, OpenAIClient
 from ..llm.prompts import QA_SYSTEM
 from ..sessions.models import Limit, Question, Session, utc_now
 
@@ -135,13 +135,14 @@ class AnswerRun:
     warnings: list[str] = field(default_factory=list)
 
 
-def _call(client: ClaudeClient, cfg: Settings, system: str, user: str, ids: list[str]) -> LLMResult:
+def _call(client: ClaudeClient | OpenAIClient, cfg: Settings, system: str, user: str, ids: list[str]) -> LLMResult:
+    llm = cfg.selected_llm
     return client.structured(
-        model=cfg.llm.qa_model,
+        model=llm.qa_model,
         system=system,
         user=user,
         schema=_schema(ids),
-        max_tokens=max(cfg.llm.max_tokens, 1024 + 400 * len(ids)),
+        max_tokens=max(llm.max_tokens, 1024 + 400 * len(ids)),
     )
 
 
@@ -155,7 +156,7 @@ def _add_usage(total: dict[str, int], usage: dict[str, Any]) -> None:
 def answer_questions(
     session: Session,
     cfg: Settings,
-    client: ClaudeClient,
+    client: ClaudeClient | OpenAIClient,
     *,
     ids: list[str] | None = None,
     feedback: dict[str, str] | None = None,

@@ -157,6 +157,41 @@ def test_list_validation_rejects_comma_and_overlong(tracker: Tracker):
         tracker.sync_list_validations({"Applied_Through": ["x" * 256]})
 
 
+def test_role_category_validation_roundtrip_and_growth(tracker: Tracker):
+    from backend.columns import list_validation_options
+    from backend.config import Settings
+
+    options = list_validation_options(Settings())
+    roles = options["Role_Category"]
+    assert "Game Engines" in roles
+    legacy_roles = [role for role in roles if role != "Game Engines"]
+    tracker.sync_list_validations({"Role_Category": legacy_roles})
+    assert tracker.read_list_options(["Role_Category"]) == {"Role_Category": legacy_roles}
+    assert load_workbook(tracker.path).sheetnames == ["Sheet1"]
+
+    tracker.sync_list_validations(options)
+    assert tracker.read_list_options(["Role_Category"]) == {"Role_Category": roles}
+    tracker.write_row("F1", {"Role_Category": "Backend"}, list_options=options)
+
+    expanded_roles = [*roles, "Former Role Category"]
+    tracker.sync_list_validations({"Role_Category": expanded_roles})
+    assert tracker.read_list_options(["Role_Category"]) == {"Role_Category": expanded_roles}
+    tracker.write_row("F2", {"Role_Category": "Game Engines"}, list_options=options)
+    assert tracker.read_list_options(["Role_Category"]) == {"Role_Category": roles}
+    assert tracker.read_row("F2")["Role_Category"] == "Game Engines"
+
+    wb = load_workbook(tracker.path)
+    assert wb.sheetnames == ["Sheet1", "_HTP_Lists"]
+    assert wb["_HTP_Lists"].sheet_state == "veryHidden"
+    assert wb["_HTP_Lists"].cell(len(roles) + 1, 1).value is None
+    assert list(wb.defined_names["HTP_Role_Category_Options"].destinations) == [
+        ("_HTP_Lists", f"$A$1:$A${len(roles)}"),
+    ]
+    validations = {str(dv.sqref): dv.formula1 for dv in wb["Sheet1"].data_validations.dataValidation}
+    assert validations["N2:N3"] == "HTP_Role_Category_Options"
+    assert validations["M2:M3"] == '"' + ",".join(options["Outcome"]) + '"'
+
+
 def test_read_list_options_roundtrip(tracker: Tracker):
     tracker.sync_list_validations({"Found_From": ["HiringCafe", "Referral"]})
     got = tracker.read_list_options(["Found_From", "Applied_Through"])
@@ -175,11 +210,11 @@ def test_parse_list_formula_strips_excel_spaces():
 
 
 def test_dropdown_compare_and_cache(env):
-    from backend.columns import DEFAULT_OPTIONS, editable_list_options
+    from backend.columns import editable_list_options
     from backend.excel.dropdown_sync import compare_dropdowns, dropdown_cache
 
     dropdown_cache.clear()
-    opts = {k: list(DEFAULT_OPTIONS[k]) for k in ("Application_Status", "Applied_Through", "Found_From")}
+    opts = editable_list_options(env)
     Tracker(env.tracker_abs, backups_keep=2).sync_list_validations(opts)
 
     a = compare_dropdowns(env, locked=False, force=True)

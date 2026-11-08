@@ -11,7 +11,7 @@ Local, single-user job-application pipeline. Pasted posting -> Jev (TypeSafe) ty
 - **Excel is the only source of truth for tracker row values.** No database. Non-tracker state lives in `<application folder>/session.json`. **Dropdown vocabulary** for `Application_Status` / `Applied_Through` / `Found_From` is owned by HTP (`htp.config.json` `options`, else `columns.DEFAULT_OPTIONS`) and mirrored into Excel list validations (Add…, Sync dock, reinforce on write).
 - **Decoupled from Resumate** (`../resumate`): share files, never import its code. Same stack on purpose (FastAPI + Vue 3).
 - **Jev = pre-LLM filter.** Nouls gate which fields go into the LLM schema (include at >= 0.35). Work_Mode / Employment_Type choices are written directly at confidence >= 0.7, otherwise added to the schema as enums. `Role_Category` (second Jev call after subroles) always writes a value: keep the choice even below 0.7; fallback `Other tech`. Upload mode + required-doc nouls are hints for the Files tab.
-- **Manual columns, never sent to Jev or the LLM:** Applied_Date, Posting_URL, Application_Status, Outcome, Applied_Through, Found_From. Days_Since_Applied is a formula; Folder is written by the engine. `Role_Category` is a fixed 17-value Jev choice (after subroles; incl. Applied AI); `Subrole_Categories` is free-text LLM. New-application UI defaults `Applied_Date` to today.
+- **Manual columns, never sent to Jev or the LLM:** Applied_Date, Posting_URL, Application_Status, Outcome, Applied_Through, Found_From. Days_Since_Applied is a formula; Folder is written by the engine. Jev selects `Role_Category` after subroles from 18 fixed choices, including Applied AI and Game Engines. The LLM extracts free-text `Subrole_Categories`. New-application UI defaults `Applied_Date` to today.
 - **Folder name** `{Requisition_ID}_{Organization}_{Position_Title}_{Date_Created}` (creation date, never renamed). `null` for missing parts; `_{unix_ts}` only when the first three are all null; `_2`, `_3` on collision.
 - **File names:** inputs `{count}_<name>.<ext>`; separate finals `{Candidate_Name}_{DocType}_{X}.<ext>`; combined `{Candidate_Name}_{X}.pdf` (combined output is PDF only).
 - **Q&A context** is one user-written `JobHunting/candidate_context.txt`, read fresh every call.
@@ -40,7 +40,7 @@ backend/
   files/           convert.py (soffice, pdf2docx, PyMuPDF, img2pdf), combine.py (pypdf), manager.py (FileManager: manifest <-> disk)
   qa/answer.py     answer_questions() (one structured call, limit check + re-ask), answers.md rendering
   sessions/        models.py (session.json), store.py
-frontend/          Vue 3 + Vite + Pinia + Tailwind v4 (:5180); views + SyncDock + status icons in `src/img/`
+frontend/          Vue 3 + Vite + Pinia + Tailwind v4 (:5180); every view uses PageHeader (title/actions + SyncDock); status icons in `src/img/`
 tests/             pytest suite (offline, synthetic tracker, fake Jev/Claude); run `python -m pytest`
 scripts/one_time/  one-shot migrations (locations, role_category, employment_type, …)
 docs/DESIGN.md     design spec

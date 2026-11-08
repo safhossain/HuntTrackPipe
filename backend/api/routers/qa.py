@@ -4,7 +4,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 
 from ...excel.tracker import TrackerError
-from ...llm.client import ClaudeClient
+from ...llm.client import selected_client
 from ...qa.answer import ANSWERS_FILE, answer_questions, write_answers_md
 from ...sessions.models import Question, Session, utc_now
 from ..deps import get_settings, get_store, get_tracker
@@ -136,7 +136,7 @@ def answer_pending(folder: str, req: AnswerRequest) -> QAView:
     session = _load(folder)
     cfg = get_settings()
     org, title = _org_title(session)
-    run = answer_questions(session, cfg, ClaudeClient(cfg.llm), ids=req.ids, organization=org, title=title)
+    run = answer_questions(session, cfg, selected_client(cfg), ids=req.ids, organization=org, title=title)
     if not run.answered and not run.warnings:
         raise HTTPException(400, "No pending questions.")
     return _save(session, run.warnings)
@@ -150,6 +150,6 @@ def regenerate(folder: str, qid: str, req: RegenerateRequest) -> QAView:
     org, title = _org_title(session)
     fb = (req.feedback or "").strip() or None
     run = answer_questions(
-        session, cfg, ClaudeClient(cfg.llm), ids=[q.id], feedback={q.id: fb} if fb else None, organization=org, title=title
+        session, cfg, selected_client(cfg), ids=[q.id], feedback={q.id: fb} if fb else None, organization=org, title=title
     )
     return _save(session, run.warnings)

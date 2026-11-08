@@ -84,6 +84,8 @@ class TrackerStatusResponse(BaseModel):
     watching: bool = False
     dropdown_sync: DropdownSyncStatusModel
     suggest_sync: bool = False
+    claude_credit_low: bool
+    openai_credit_low: bool
 
 
 class LogsResponse(BaseModel):
@@ -127,6 +129,10 @@ class NotesRequest(BaseModel):
 
 class NotesResponse(BaseModel):
     notes: str
+
+
+class PostingText(BaseModel):
+    text: str
 
 
 class SessionDetail(BaseModel):

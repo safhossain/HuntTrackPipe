@@ -1,8 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onBeforeUnmount, ref } from 'vue'
-import { RouterLink, RouterView, useRoute } from 'vue-router'
+import { RouterLink, RouterView } from 'vue-router'
 import { useAppStore } from './stores/app'
-import SyncDock from './components/SyncDock.vue'
 import ToastStack from './components/ToastStack.vue'
 
 import huntTrackPipeLogo from './img/hunttrackpipe-logo.png'
@@ -11,14 +10,19 @@ import excelBad from './img/excel-icon-red.png'
 import jevOk from './img/jev_logo-transparent_green.png'
 import jevBad from './img/jev_logo-transparent_red.png'
 import claudeOk from './img/claude_orange.png'
-import claudeBad from './img/claude_grey.png'
+import claudeMissing from './img/claude_black.png'
+import claudeInactive from './img/claude_grey.png'
+import claudeLowCredit from './img/claude_red.png'
+import openaiOk from './img/chatgpt_green.png'
+import openaiMissing from './img/chatgpt_black.png'
+import openaiInactive from './img/chatgpt_grey.png'
+import openaiLowCredit from './img/chatgpt_red.png'
 
 const app = useAppStore()
-const route = useRoute()
 onMounted(() => app.bootstrap())
 
 const navbar = ref<HTMLElement | null>(null)
-const pinned = ref(false)
+const pinned = ref(true)
 const unpinning = ref(false)
 const hiddenUntilTop = ref(false)
 const navbarHeight = ref(0)
@@ -84,10 +88,31 @@ const jevTitle = computed(() =>
   app.settings?.keys.TYPESAFE_API_KEY ? 'Jev API key set' : 'Jev API key missing',
 )
 
-const claudeIcon = computed(() => (app.settings?.keys.ANTHROPIC_API_KEY ? claudeOk : claudeBad))
-const claudeTitle = computed(() =>
-  app.settings?.keys.ANTHROPIC_API_KEY ? 'Claude API key set' : 'Claude API key missing',
-)
+const claudeStatus = computed(() => {
+  if (!app.settings?.keys.ANTHROPIC_API_KEY) {
+    return { icon: claudeMissing, title: 'Claude API key missing' }
+  }
+  if (app.modelProvider !== 'anthropic') {
+    return { icon: claudeInactive, title: 'Claude is inactive' }
+  }
+  if (app.trackerStatus?.claude_credit_low) {
+    return { icon: claudeLowCredit, title: 'Claude API credit balance is too low' }
+  }
+  return { icon: claudeOk, title: 'Claude API key set' }
+})
+
+const openaiStatus = computed(() => {
+  if (!app.settings?.keys.OPENAI_API_KEY) {
+    return { icon: openaiMissing, title: 'OpenAI API key missing' }
+  }
+  if (app.modelProvider !== 'openai') {
+    return { icon: openaiInactive, title: 'OpenAI is inactive' }
+  }
+  if (app.trackerStatus?.openai_credit_low) {
+    return { icon: openaiLowCredit, title: 'OpenAI API credit balance is too low' }
+  }
+  return { icon: openaiOk, title: 'OpenAI API key set' }
+})
 </script>
 
 <template>
@@ -115,7 +140,8 @@ const claudeTitle = computed(() =>
               :class="app.trackerLocked ? 'opacity-60' : undefined"
             />
             <img :src="jevIcon" :alt="jevTitle" :title="jevTitle" class="h-5 w-5 object-contain" />
-            <img :src="claudeIcon" :alt="claudeTitle" :title="claudeTitle" class="h-5 w-5 object-contain" />
+            <img :src="claudeStatus.icon" :alt="claudeStatus.title" :title="claudeStatus.title" class="h-5 w-5 object-contain" />
+            <img :src="openaiStatus.icon" :alt="openaiStatus.title" :title="openaiStatus.title" class="h-5 w-5 object-contain" />
           </template>
           <span v-else-if="app.apiError" class="text-xs text-red-600">API unreachable</span>
           <span v-else class="text-xs text-slate-500">Connecting…</span>
@@ -145,14 +171,10 @@ const claudeTitle = computed(() =>
     </header>
     </div>
 
-    <!-- Content + sync column share one row: small gap, no overlay, no empty canyon. -->
-    <div class="page-shell flex items-start gap-4 py-6">
-      <main class="min-w-0 flex-1">
+    <main class="page-shell min-w-0 py-6">
         <div v-if="!app.apiReady && !app.apiError" class="text-sm text-slate-500">Waiting for the API on :8010…</div>
         <RouterView v-else />
-      </main>
-      <SyncDock v-if="route.path !== '/'" />
-    </div>
+    </main>
 
     <button v-show="scrollY > 0" type="button" class="fixed bottom-4 left-4 z-30 flex h-10 w-10 items-center justify-center rounded-full border border-slate-300 bg-white text-slate-600 shadow-md hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-indigo-600" title="Scroll to top" aria-label="Scroll to top" @click="scrollToTop">
       <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">

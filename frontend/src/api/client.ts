@@ -129,10 +129,14 @@ export interface TrackerStatus {
   watching: boolean
   dropdown_sync: DropdownSyncStatus
   suggest_sync: boolean
+  claude_credit_low: boolean
+  openai_credit_low: boolean
 }
 
+export type ModelProvider = 'anthropic' | 'openai'
+
 export interface SettingsView {
-  config: Record<string, unknown>
+  config: Record<string, unknown> & { llm?: { extract_provider?: ModelProvider } }
   paths: Record<string, string>
   keys: Record<string, boolean>
   tracker_exists: boolean
@@ -367,6 +371,11 @@ export const api = {
     request<{ notes: string }>(`/sessions/${encodeURIComponent(folder)}/notes`, {
       method: 'PUT',
       body: JSON.stringify({ notes }),
+    }),
+  setSessionPosting: (folder: string, text: string) =>
+    request<Session['posting']>(`/sessions/${encodeURIComponent(folder)}/posting`, {
+      method: 'PUT',
+      body: JSON.stringify({ text }),
     }),
   reextract: (folder: string, use_jev: boolean, use_llm: boolean) =>
     request<ReextractResponse>(`/sessions/${encodeURIComponent(folder)}/reextract`, {

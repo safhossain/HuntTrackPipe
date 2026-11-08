@@ -42,7 +42,7 @@ One-time migrations live under `scripts/one_time/` (`python -m scripts.one_time.
 - Start the API without `--reload` from a background shell when testing from the agent; restart it after backend edits. Seed sessions/files via the API since the Cursor browser cannot pick files.
 - Keep scratch tests outside the repo; `git status` must stay clean of test artifacts. Remove `%TEMP%\htp_ui` afterwards.
 
-## Dashboard sync placement (2026-11-07)
-- SyncDock is beside New application. Expansion shifts actions left and the table down without changing its width.
-- Starts minimized and expands on differences; yellow floats top-right after the action row leaves view and returns inline on scroll-back with expansion state retained. Blue scrolls normally; other pages retain the sticky side column.
-- Typecheck passed; browser measurements confirmed unchanged table width during expansion. Yellow scrolling was not exercised with live mismatched data.
+## Shared sync placement (2026-11-08)
+- PageHeader.vue hosts SyncDock on every route: beside New application on Dashboard, after Copy path in Session, opposite the title on New application / Convert / Settings. Expansion shifts actions left and content down without changing its width. App.vue has no sync side column.
+- Starts minimized and expands on differences; yellow floats top-right after the action row leaves view and returns inline on scroll-back with expansion state retained. Blue scrolls normally on all pages. Yellow floating placement accounts for the pinned navbar and scrollbar width.
+- Typecheck passed; browser checked sync placement/expansion on New application, Convert, Settings, and Session. Posting-form width stays unchanged during expansion; Session Copy path and sync remain aligned at 32px height. Yellow scrolling was not exercised with live mismatched data.

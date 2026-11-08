@@ -7,9 +7,10 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 
 from ...columns import EXTRACTED_COLUMNS, list_validation_options
+from ...duplicates import posting_hash
 from ...excel.tracker import TrackerError, TrackerLocked
 from ...pipeline import Extraction, create_application, duplicate_application, extract
-from ...sessions.models import utc_now
+from ...sessions.models import Posting, utc_now
 from ..deps import coerce_row_values, get_settings, get_store, get_tracker, report_model
 from ..models import (
     CreateSessionRequest,
@@ -17,6 +18,7 @@ from ..models import (
     DiffEntry,
     DuplicateSessionRequest,
     ExtractResponse,
+    PostingText,
     ReextractRequest,
     ReextractResponse,
     RowWriteRequest,
@@ -136,6 +138,13 @@ def put_session_notes(folder: str, req: NotesRequest) -> NotesResponse:
     session.notes = req.notes
     store.save(session)
     return NotesResponse(notes=session.notes)
+
+
+@router.put("/{folder}/posting", response_model=Posting)
+def put_session_posting(folder: str, req: PostingText) -> Posting:
+    if not req.text.strip():
+        raise HTTPException(400, "Posting text is empty.")
+    return get_store().update_posting(folder, req.text, posting_hash(req.text))
 
 
 @router.put("/{folder}/row", response_model=RowWriteResponse)

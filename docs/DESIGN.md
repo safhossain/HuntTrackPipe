@@ -8,7 +8,7 @@ HuntTrackPipe is a local, single-user job-application pipeline. Per application 
 
 1. Takes a pasted job posting.
 2. Asks Jev (TypeSafe) typed pre-LLM questions about the posting.
-3. Builds a JSON schema from Jev's answers and has Claude Haiku 5.5 extract the fields.
+3. Builds a JSON schema from Jev's answers and sends it to the selected extraction provider, Anthropic or OpenAI.
 4. Lets the user review/edit, then creates the application folder and writes one row to `job_application_tracker.xlsx`.
 5. Manages application files (rename, convert, combine into one PDF).
 6. Answers application text-field questions from a user-maintained candidate context file.
@@ -23,10 +23,10 @@ Non-goals (v1): no database, no code bridge to Resumate, no browser automation o
 | Frontend | Vue 3 + Vite + Pinia + Tailwind | Same as Resumate; drag-reorder and PDF previews are easy in a browser |
 | Excel | `openpyxl` | Preserves the table, dropdowns and formula; file is never open elsewhere while the engine runs |
 | Jev | `typesafe-sdk` (official), `https://api.typesafe.ai/v1/systemone`, model pinned `jev-1.13.0` | Pin a version; log the `model` field of every response |
-| LLM | `anthropic` SDK, model `claude-haiku-5-5` | User choice. Structured outputs via `output_config.format` |
+| LLM | `anthropic` and `openai` SDKs | Claude Messages and OpenAI Responses share the structured schemas for extraction and Q&A. |
 | PDF | `pypdf` (merge), `PyMuPDF` (thumbnails, pdf->png/jpg), `img2pdf` (png/jpg->pdf), `pdf2docx` (pdf->docx), LibreOffice `soffice --headless` (docx->pdf) | LibreOffice already installed for Resumate |
 
-Run: `npm run dev` at repo root -> uvicorn on `:8010` + Vite on `:5180` (`strictPort: true`, `/api` proxied to `127.0.0.1:8010`). Ports differ from Resumate (`:8000` / `:5173`) so both apps can run at the same time. Keys live in `.env` (`TYPESAFE_API_KEY`, `ANTHROPIC_API_KEY`); both SDKs read them by default.
+Run: `npm run dev` at repo root -> uvicorn on `:8010` + Vite on `:5180` (`strictPort: true`, `/api` proxied to `127.0.0.1:8010`). Ports differ from Resumate (`:8000` / `:5173`) so both apps can run at the same time. Keys live in `.env` (`TYPESAFE_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`).
 
 ## 3. Repo layout
 
@@ -45,7 +45,7 @@ HuntTrackPipe/
       questions.py          # the fixed question set + Excel value mapping
       derive.py             # answers -> {schema_fields, direct_values, upload hints}
     llm/
-      client.py             # Claude Messages call with output_config.format
+      client.py             # Claude Messages and OpenAI Responses clients, credit status
       schema_builder.py     # Jev-derived field list -> strict JSON schema
       prompts.py            # extraction + QA system prompts
     excel/
@@ -61,14 +61,16 @@ HuntTrackPipe/
       combine.py            # ordered inputs -> single PDF
       thumbnails.py         # PyMuPDF page images for the UI
     qa/
-      answer.py             # pending questions -> one Claude call -> answers.md
+      answer.py             # pending questions -> selected provider -> answers.md
     api/routers/
       sessions.py, extract.py, files.py, qa.py, settings.py
   frontend/                 # Vue app
     src/
-      App.vue               # header logo, navigation, status icons, Sync dock
+      App.vue               # navbar logo, navigation, status icons; shared content shell
       applicationColors.ts  # shared row palette/priority + Outcome chart grouping
       views/DashboardView.vue
+      components/PageHeader.vue     # page title + actions + SyncDock on every route
+      components/SyncDock.vue       # inline expansion; yellow-only floating panel
       components/DashboardMetrics.vue
       img/hunttrackpipe-logo.png
     public/
@@ -93,7 +95,7 @@ Applications/
   .htp_backup/                                  # last 10 tracker copies
   1234567890_Google_Software-Engineer_2026-10-11/
     session.json                                # engine state for this application
-    posting.txt                                 # raw pasted posting
+    posting.txt                                 # raw posting text, including edits
     0_resume.pdf                                # inputs: {count}_<original-name>.<ext>
     1_transcript.pdf
     Safwan-Hossain_Resume_1234567890.pdf        # final separate file(s): {Name}_{DocType}_{X}
@@ -109,7 +111,7 @@ Applications/
   "session_id": "uuid4",
   "created_at": "2026-10-11T08:30:00Z",
   "folder": "1234567890_Google_Software-Engineer_2026-10-11",
-  "posting": { "text": "...", "url": null },
+  "posting": { "text": "...", "url": null, "hash": "..." },
   "jev": { "model": "jev-1.13.0", "at": "...", "answers": { "...raw response answers..." },
            "derived": { "schema_fields": ["requisition_id", "..."],
                         "direct_values": { "Work_Mode": "Hybrid" },
@@ -132,9 +134,11 @@ Applications/
 }
 ```
 
-Source-of-truth rule: Excel owns every tracker **row value**. `review.values` is what the engine last wrote; on session open the engine re-reads the row (matched via the `Folder` column) and shows Excel's values. Everything that is not a tracker column (posting text, Jev/LLM raw output, file manifest, Q&A, `notes`, `review.compensation_estimated`) lives only in `session.json`.
+Source-of-truth rule: Excel owns every tracker **row value**. `review.values` is what the engine last wrote; on session open the engine re-reads the row (matched via the `Folder` column) and shows Excel's values. Session metadata (posting text, Jev/LLM raw output, file manifest, Q&A, `notes`, `review.compensation_estimated`) lives in `session.json`. The raw posting text is also saved to `posting.txt` on creation and when edited.
 
-**Dropdown vocabulary** for `Application_Status`, `Applied_Through`, and `Found_From` is owned by HTP (`htp.config.json` `options`, falling back to shipped defaults in `columns.DEFAULT_OPTIONS`). The UI can append values via **Add…** on those dropdowns (`POST /api/meta/options/{column}`). Excel **table-body** list data-validations (not whole-column) are mirrored from those lists plus code-owned lists (`Work_Mode`, `Employment_Type`, `Outcome`, `Role_Category`) on every tracker write / Sync. Inline Excel lists often use `", "` spacing; `parse_list_formula` strips each item so drift compare is not a false positive.
+**Dropdown vocabulary** for `Application_Status`, `Applied_Through`, and `Found_From` is owned by HTP (`htp.config.json` `options`, falling back to shipped defaults in `columns.DEFAULT_OPTIONS`). The UI can append values via **Add…** on those dropdowns (`POST /api/meta/options/{column}`). Tracker options appear alphabetically in the app and Excel, with `Other` last where present. Excel **table-body** list data-validations (not whole-column) are mirrored from those lists plus code-owned lists (`Work_Mode`, `Employment_Type`, `Outcome`, `Role_Category`) on every tracker write / Sync. Inline Excel lists often use `", "` spacing; `parse_list_formula` strips each item so drift compare is not a false positive.
+
+The `Role_Category` list exceeds Excel's 255-character limit for inline choices. Its validation points to a named range on the hidden `_HTP_Lists` worksheet.
 
 The stored Outcome vocabulary is `Pending`, `Early interest`, `Withdrawn`, `Rejected`, `Offer`, `Accepted`. The frontend recognizes legacy `Some interest` as `Early interest` for display/color compatibility. That alias does not migrate stored values. When renaming a dropdown option, update `backend/columns.py`, sync the workbook's validation list, and migrate affected Outcome cells plus `review.values.Outcome` and any queued `review.pending_write.values.Outcome`. Back up before migrating and verify the saved validation list and cells. A label-only change is not a completed data rename.
 
@@ -146,7 +150,7 @@ The stored Outcome vocabulary is `Pending`, `Early interest`, `Withdrawn`, `Reje
 paste posting (+ optional URL)
   -> Jev call (one request, all questions)
   -> derive: schema fields, direct values, upload hints
-  -> schema builder -> Claude extraction call
+  -> schema builder -> selected provider extracts fields
   -> review screen: extracted values (editable) + manual fields
   -> Create: folder name -> mkdir + posting.txt + session.json -> Excel row written
 ```
@@ -186,13 +190,13 @@ Gate noul: `is_job_posting`.
 
 Thresholds (config, defaults): `noul_include_threshold = 0.35` (a field with noul >= 0.35 goes into the LLM schema; bias toward inclusion since an extra field just returns `null`), `choice_direct_confidence = 0.7` (choice written straight to Excel at or above this; below it the column is added to the LLM schema as an enum), document nouls >= 0.5 pre-tick a document type.
 
-Choices also include `role_category` (17 fixed buckets → Excel `Role_Category`, incl. Applied AI), classified in a **second** Jev call after subroles are known (state: posting + `subrole_categories`). Unlike Work_Mode / Employment_Type, `Role_Category` is **never left blank**: a valid Jev choice is kept even below `choice_direct_confidence`; missing/unknown choice falls back to `Other tech`.
+Choices also include `role_category` (18 fixed categories, including Applied AI and Game Engines), classified in a **second** Jev call after subroles are known (state: posting + `subrole_categories`). Game Engines covers roles primarily developing game engines or their core systems. Unlike Work_Mode / Employment_Type, `Role_Category` is **never left blank**: a valid Jev choice is kept even below `choice_direct_confidence`; missing/unknown choice falls back to `Other tech`.
 
 Not sent to Jev or the LLM (manual): `Applied_Date`, `Posting_URL`, `Application_Status`, `Outcome`, `Applied_Through`, `Found_From` (`HiringCafe`, `LinkedIn`, `Indeed`, `GCJobs`, `CRA`, `Other`), `Days_Since_Applied` (formula), `Folder` (engine).
 
-## 7. LLM extraction (Claude Haiku 5.5)
+## 7. LLM extraction
 
-Request: Messages API, `model: claude-haiku-5-5`, `max_tokens: 2048`, `output_config: { format: { type: "json_schema", schema }, effort: "low" }`. No `temperature` / `top_p` / `top_k` (400 on this model). One retry on transport error or schema-validation failure. Usage is stored in `session.json`.
+`llm.extract_provider` selects the provider for new extractions, re-extractions, and Q&A. Existing configs default to Anthropic, which uses the Messages API with `output_config.format`, `claude-haiku-5-5`, and effort `low`. OpenAI uses the Responses API with strict `text.format` JSON Schema, `gpt-6-luna`, and reasoning effort `none`. Each provider has separate extraction and Q&A models, with shared effort, output token limit, and input token warning settings. Usage is stored in `session.json`.
 
 Schema builder: starts from the ordered candidate list below, keeps only fields whose Jev gate passed (plus low-confidence choice columns), marks every property required and nullable, `additionalProperties: false`.
 
@@ -208,7 +212,7 @@ Schema builder: starts from the ordered candidate list below, keeps only fields 
 | `recruiter_name` | string / null | |
 | `recruiter_contact` | string / null | email / phone / URL |
 | `subrole_categories` | array of string | 1-3 fine-grained labels → Excel `Subrole_Categories`; **cap enforced in prompt and truncated to 3 in code** |
-| *(Jev choice, not LLM)* `role_category` | enum of 17 | → Excel `Role_Category` (Frontend, Backend, …, Applied AI, Other tech, Non-tech) |
+| *(Jev choice, not LLM)* `role_category` | enum of 18 | → Excel `Role_Category` (Frontend, Backend, …, Applied AI, Game Engines, Other tech, Non-tech) |
 | `position_level` | string / null | free text, one value (Intern, Junior, Senior, ...) |
 | `work_mode` | enum (Excel values) / null | only when Jev confidence < 0.7 |
 | `employment_type` | enum (Excel values) / null | only when Jev confidence < 0.7 |
@@ -260,25 +264,31 @@ Upload mode (from Jev, user can override; override is remembered as `upload_mode
 
 Inputs per call: `candidate_context.txt` (read fresh every time; path in config), `posting.txt`, organization + title, previously answered questions (read-only, for consistency), pending questions each with optional `{unit: chars|words, value}` limit.
 
-One Claude call (`qa_model`, default `claude-haiku-5-5`, configurable) with structured output `{ answers: [{ id, answer }] }` (`id` constrained to the pending ids via enum). System prompt (`QA_SYSTEM`): write in first person as the candidate; use only facts in the context and posting, never invent, no placeholders; aim for 70-95 % of each limit; no em/en dashes, no markdown. Engine (`backend/qa/answer.py`): strips quotes and converts dashes in code, verifies limits (`chars` = `len`, `words` = whitespace split) and re-asks once for the offenders with the previous answer and an explicit "at most N" instruction; if still over, keeps the shorter answer and sets `question.note`. Usage accumulates in `qa.usage`.
+The selected provider's `qa_model` answers the pending questions in one structured call. It defaults to `claude-haiku-5-5` for Claude and `gpt-6-luna` for OpenAI. The response is `{ answers: [{ id, answer }] }`, with each `id` constrained to the pending question IDs. The system prompt (`QA_SYSTEM`) asks for first-person answers grounded in the candidate context and posting. The engine (`backend/qa/answer.py`) normalizes punctuation and checks character and word limits. It asks once for shorter answers where needed, keeps the shorter result, and sets `question.note` if the answer is still over the limit. Usage accumulates in `qa.usage`.
 
 Operations: add one or several questions (one per line) with optional limit; edit text/limit (editing an answered question keeps the answer and adds a note); type or edit an answer by hand (`model = "manual"`); reorder; delete; Answer pending (all in one call) or Answer one; Regenerate one with optional feedback (previous answer + feedback go into the prompt; previously answered questions are included read-only for consistency); Copy. `answers.md` is regenerated after every change and is downloadable through the files endpoint. Missing or empty `candidate_context.txt` -> HTTP 412 with the expected path; the UI shows a banner with the path and disables the Answer buttons. Token guard as in section 7.
 
 ## 12. UI screens
 
-**Chrome (all pages):** the HuntTrackPipe PNG wordmark links to `/`; browser tabs prefer the PNG favicon with an ICO fallback (asset locations in section 12.2). Header status icons from `frontend/src/img/` indicate Excel green/red = tracker found/missing; Jev green/red = TYPESAFE key; Claude orange/grey = Anthropic key. A locked tracker dims the Excel icon and shows an amber banner.
+**Chrome (all pages):** the HuntTrackPipe PNG wordmark links to `/`, and browser tabs prefer the PNG favicon with an ICO fallback (asset locations in section 12.2). Excel green/red shows whether the tracker exists, and Jev green/red shows whether the TypeSafe key is configured. Each model provider shows black for a missing key, grey when configured but inactive, and red for an observed credit error while active. An active provider with a configured key and no recorded credit error shows orange for Claude or green for OpenAI. A locked tracker dims the Excel icon and shows an amber banner.
 
-Navbar and content share `.page-shell` (80rem maximum width, 1rem side padding). The right-aligned control group is Excel / Jev / Claude / pin, all 20×20px and vertically centered. The pin's right edge aligns with the dashboard table frame as the viewport changes, including when the navbar is pinned.
+The clients record low-credit responses using separate provider markers under `<applications_dir>/.htp_state/` keyed by the credential's SHA-256 fingerprint. OpenAI's `credit_balance_exhausted` error sets its marker. A successful response clears the corresponding marker. The status survives restarts, and the header reads it through its existing two-second local status poll.
 
-**Sync dock** (`SyncDock.vue`): on the Dashboard, sits immediately right of New application. Other pages retain the sticky right column. Comparison covers the three editable dropdown columns only. Minimized = colored chrome only (refresh arrows + green Excel logo | min/max); maximized grows left and down, shifting Dashboard actions left and the full-width table down with a 300ms transition. It shows per-column diffs (only-in-HTP / only-in-Excel / order / missing DV). Button tone: blue = in sync (still clickable), yellow = differs, grey = locked. Sync pushes all mirrored lists, including code-owned Outcome, from HTP to Excel (`POST /meta/options/sync`). Distinct from the Dashboard list-refresh control (refresh icon only, no Excel logo).
+Navbar and content share `.page-shell` (80rem maximum width, 1rem side padding). The right-aligned control group is Excel / Jev / Claude / OpenAI / pin, all 20×20px and vertically centered. The pin's right edge aligns with the dashboard table frame as the viewport changes, including when the navbar is pinned.
 
-Dashboard sync starts minimized and expands on detected differences. While yellow, it floats at the top right after the action row scrolls out of view, returning inline when that row reappears; expansion state is retained across position changes. Blue panels scroll away normally. A placeholder preserves document height during floating transitions.
+**Sync dock** (`SyncDock.vue`): hosted by shared `PageHeader.vue` on Dashboard, New application, Session, Convert, and Settings (also Session loading/error states). It is the final control in each page's heading/action row: after New application on Dashboard, after Copy path in Session, at the right edge opposite the title elsewhere. App.vue no longer reserves a side column. Convert keeps its narrower centered form beneath the full-width header. Comparison covers the three editable dropdown columns only. Minimized = colored chrome only (refresh arrows + green Excel logo | min/max); maximized grows left and down, shifting page actions left and content down without reducing its width with a 300ms transition. It shows per-column diffs (only-in-HTP / only-in-Excel / order / missing DV). Button tone: blue = in sync (still clickable), yellow = differs, grey = locked. Sync pushes all mirrored lists, including code-owned Outcome, from HTP to Excel (`POST /meta/options/sync`). Distinct from the Dashboard list-refresh control (refresh icon only, no Excel logo).
+
+On each page, sync starts minimized and expands on detected differences. While yellow, it floats at the top right after the action row scrolls out of view, returning inline when that row reappears; expansion state is retained across position changes. Blue panels scroll away normally. A placeholder preserves document height during floating transitions. Floating placement and the visibility threshold account for the pinned navbar height; right alignment uses the viewport content width, excluding the scrollbar.
+
+`PageHeader.vue` accepts a title or custom heading slot plus an `actions` slot. It appends one `SyncDock` after those actions, including on Session loading/error screens. Page actions and the sync controls share the 32px `.toolbar-control` height and aligned top edges; sync/minimize remain separate hit targets within one colored bar. The expanded panel uses an inset outline so its frame does not shift the controls. Page content stays below the header, with no reserved sync sidebar.
 
 1. **Dashboard** - list of application folders with status/outcome read from Excel; icon-only **Refresh** reloads `GET /sessions` (does not sync dropdowns); "New application". Deadline is not a column here. Status, Outcome, Applied, and Days headers/cells are centered; Status/Outcome badges are centered within their cells and their text is centered inside the badges, including wrapped labels. Row colors and the Outcome pie/legend share one resolver; see section 12.1. Metrics at the bottom (`DashboardMetrics.vue`).
 2. **New application** - paste posting + URL -> Run -> three panels: Jev results (chips with probability/confidence), extracted fields (editable form; Compensation has a compact **Estimated.** toggle stored only in `session.json`), manual fields (Applied_Date, Posting_URL, Application_Status, Outcome, Applied_Through, Found_From). Dropdowns for Status / Applied Through / Found From include **Add…** to permanently grow the list (config + Excel DV). A "Possible duplicate" banner lists matching sessions (section 15); "Create" makes the folder and writes the row, asking for confirmation when a duplicate was flagged (disabled while tracker locked).
 3. **Session** - tabs: Overview (Excel read-back, edit row fields, write; Posting URL **Open** and **Copy link** controls; Compensation **Estimated.** flag via `PUT /flags`; **Duplicate…** edits identifying fields before creating a new folder dated today, copying posting/Jev/LLM, notes, upload preferences, and the estimate flag, with empty files/Q&A; **Re-extract** shows a per-column diff and applies selected columns using `force_columns`), Files (section 10), Questions (section 11; saving/answering/regenerating one question preserves unsaved drafts in other boxes while the panel is mounted), Notes (plain textarea; auto-saves to `session.notes` after a 500 ms typing pause and on blur), Log (raw Jev/LLM payloads of the latest run, usage). Save / Retry / Apply / Duplicate disabled while tracker locked.
 4. **Convert** - standalone converter (section 10); nothing is stored. Multi-file drop + **→ PDF** (`POST /files/convert-all-pdf`) downloads one PDF or a zip; already-PDF uploads are passed through.
-5. **Settings** - edits `htp.config.json` through `PUT /settings` (partial, deep-merged, validated; `settings()` cache cleared; retargets lock watch); shows key / tracker / candidate-context presence with paths on their own wrapping lines, and a tail of the log file. Dropdown sync UX lives in the Sync dock, not on this page.
+5. **Settings** - edits `htp.config.json` through `PUT /settings` (partial, deep-merged, validated; `settings()` cache cleared; retargets lock watch); shows key / tracker / candidate-context presence with paths on their own wrapping lines, and a tail of the log file. Dropdown sync uses the shared page-header dock, without a separate Settings sync card.
+
+In Session Overview, **Edit posting** opens the raw posting text in an editor. **Save posting** preserves nonblank input as entered, refreshes `posting.hash` for duplicate detection, and discards any displayed re-extraction diff. The save prompt offers **Re-extract now** to run the enabled providers on the saved text. **Apply** writes the selected differences to Excel.
 
 ### 12.1 Dashboard row colors and Outcome chart
 
@@ -312,7 +322,7 @@ Unrecognized outcomes use white even if the status is recognized. Missing rows a
 
 ### 12.2 Branding assets
 
-The compact global navbar in `App.vue` is unpinned by default. Its top-right icon toggles a fixed header across routes, preserving layout space and scroll position. Unpinning while scrolled animates it upward over 260 ms and hides it until the user returns to the top. At the top, unpinning simply restores normal document flow. Pin state is in memory and resets on reload. A fixed bottom-left icon button, visible when scrolled, scrolls smoothly to the top and has a `Scroll to top` tooltip/accessible name. Both animations respect reduced-motion preferences. Header height is observed so the fixed header's placeholder and Sync dock offsets include any Excel-lock banner.
+The compact global navbar in `App.vue` is pinned by default. Its top-right icon toggles a fixed header across routes, preserving layout space and scroll position. Unpinning while scrolled animates it upward over 260 ms and hides it until the user returns to the top. At the top, unpinning simply restores normal document flow. Reloading restores the pinned default. A fixed bottom-left icon button, visible when scrolled, scrolls smoothly to the top and has a `Scroll to top` tooltip/accessible name. Both animations respect reduced-motion preferences. Header height is observed so the fixed header's placeholder and Sync dock offsets include any Excel-lock banner.
 
 | Asset | Location | Consumer |
 |---|---|---|
@@ -365,7 +375,8 @@ If no dates qualify, the card shows an explanatory message in place of these sta
   "candidate_name": "Safwan Hossain",
   "candidate_context_path": "JobHunting/candidate_context.txt",
   "jev": { "model": "jev-1.13.0", "noul_include_threshold": 0.35, "choice_direct_confidence": 0.7, "doc_noul_threshold": 0.5 },
-  "llm": { "extract_model": "claude-haiku-5-5", "qa_model": "claude-haiku-5-5", "effort": "low", "max_tokens": 2048, "token_warn": 80000 },
+  "llm": { "extract_provider": "anthropic", "extract_model": "claude-haiku-5-5", "qa_model": "claude-haiku-5-5", "effort": "low", "max_tokens": 2048, "token_warn": 80000 },
+  "openai": { "extract_model": "gpt-6-luna", "qa_model": "gpt-6-luna", "effort": "none", "max_tokens": 2048, "token_warn": 80000 },
   "files": { "image_dpi": 150, "soffice_path": null },
   "backups_keep": 10,
   "options": {
@@ -386,13 +397,14 @@ If no dates qualify, the card shows an explanatory message in place of these sta
 | `GET /meta` / `GET /settings` | column lists + resolved dropdown options (+ `editable_option_columns`); key presence, paths; settings also includes `tracker_status` |
 | `POST /meta/options/{column}` `{value}` | append to an editable dropdown list (`Application_Status` / `Applied_Through` / `Found_From`); persists to config; syncs Excel list DV (options still saved if Excel is locked — `excel_synced: false`) |
 | `POST /meta/options/sync` | push all mirrored HTP lists (editable + code-owned, including Outcome) into Excel table-body list DVs; 423 if locked |
-| `GET /tracker/status?force=` | lock state (`~$` watch + probe) + dropdown DV compare vs HTP (`in_sync` / `mismatched` / `locked` / …); `suggest_sync` when unlocked and mismatched |
+| `GET /tracker/status?force=` | lock state (`~$` watch + probe), dropdown DV compare vs HTP (`in_sync` / `mismatched` / `locked` / …), and stored `claude_credit_low` and `openai_credit_low` flags. `suggest_sync` indicates unlocked dropdown drift. |
 | `GET /sessions` / `GET /sessions/{folder}` | list / load (includes Excel read-back and unmanaged folders) |
 | `POST /extract` | posting -> Jev answers + derived + LLM values in one call (`use_jev` / `use_llm` toggles); also returns `duplicates: [{folder, reason}]` |
 | `POST /sessions` | create folder + session.json + Excel row (extraction + manual values + row overrides); 409 `DuplicateError` (with `duplicates`) unless `allow_duplicate: true` |
 | `POST /sessions/{folder}/duplicate` | clone into a new folder dated today (`{values}` overrides applied before naming); copies posting, Jev/LLM, notes, estimate flag, upload preferences; files/Q&A empty; always allows same posting hash |
 | `PUT /sessions/{folder}/flags` | UI-only session flags (not Excel), currently `{compensation_estimated}` |
 | `PUT /sessions/{folder}/notes` | free-text Notes tab body (`{notes}`); session.json only |
+| `PUT /sessions/{folder}/posting` `{text}` | save nonblank raw text to `session.json` and `posting.txt` and recompute the duplicate hash |
 | `PUT /sessions/{folder}/row` | write edited fields; body `{values, force_columns}` — `force_columns` overwrite, others fill-only-empty |
 | `POST /sessions/{folder}/row/retry` | flush `review.pending_write` (`{values, force_columns}`) after Excel is closed |
 | `POST /sessions/{folder}/reextract` `{use_jev, use_llm}` | run extraction again on the stored posting; returns `{extraction, row, diff:[{column, current, proposed, changed}]}` over the extracted columns; writes nothing to Excel, replaces `jev`/`llm` in session.json |
@@ -414,7 +426,7 @@ LLM/Jev failures return HTTP 502 with the provider message (as in Resumate); Exc
 
 ### Logging
 
-`logs.setup_logging(cfg)` attaches a console handler and a `RotatingFileHandler` (2 MB x 5) at `<applications_dir>/.htp_logs/htp.log` to the `htp` logger; modules log under `htp.jev`, `htp.llm`, `htp.tracker`, `htp.pipeline`, `htp.files`, `htp.qa`, `htp.api`. Every Jev/Claude call (model, tokens, duration, attempts), every tracker write (row, written/skipped/forced columns), lock refusals, duplicate refusals, file operations and Q&A runs are logged at INFO; provider failures at WARNING/ERROR. The CLI logs to the same file with a quiet console. The API never logs posting text, candidate context or answers.
+`logs.setup_logging(cfg)` attaches a console handler and a `RotatingFileHandler` (2 MB x 5) at `<applications_dir>/.htp_logs/htp.log` to the `htp` logger; modules log under `htp.jev`, `htp.llm`, `htp.tracker`, `htp.pipeline`, `htp.files`, `htp.qa`, `htp.api`. Provider calls log the model, tokens, duration, and attempts. Tracker writes log the row and the columns written, skipped, or forced. Lock refusals, duplicate refusals, file operations, and Q&A runs are logged at INFO. Provider failures use WARNING or ERROR. The CLI logs to the same file with a quiet console. The API never logs posting text, candidate context or answers.
 
 ## 15. Edge cases
 

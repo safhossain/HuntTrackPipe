@@ -4,6 +4,7 @@ import { RouterLink, useRouter } from 'vue-router'
 import { ApiError, api, type DuplicateHit, type ExtractResponse, type Row, type RowValue } from '../api/client'
 import FieldInput from '../components/FieldInput.vue'
 import JevPanel from '../components/JevPanel.vue'
+import PageHeader from '../components/PageHeader.vue'
 import { useAppStore } from '../stores/app'
 import { cleanPostingText, errorText, todayIso } from '../utils'
 
@@ -111,7 +112,7 @@ const hintFor = (col: string) => {
 
 <template>
   <div class="space-y-4">
-    <h1 class="text-xl font-semibold">New application</h1>
+    <PageHeader title="New application" />
 
     <div class="card space-y-3">
       <label class="block">
@@ -124,7 +125,7 @@ const hintFor = (col: string) => {
           <input v-model="url" type="url" class="input" placeholder="https://…" />
         </label>
         <label class="flex items-center gap-1 text-sm"><input v-model="useJev" type="checkbox" /> Jev</label>
-        <label class="flex items-center gap-1 text-sm"><input v-model="useLlm" type="checkbox" /> LLM</label>
+        <label class="flex items-center gap-1 text-sm"><input v-model="useLlm" type="checkbox" /> {{ app.modelProviderLabel }}</label>
         <button class="btn-primary" :disabled="extracting || !posting.trim()" @click="runExtract">
           {{ extracting ? 'Extracting…' : 'Run extraction' }}
         </button>
