@@ -48,4 +48,4 @@ htp.config.json    non-secret settings
 JobHunting/        personal data (git-ignored: Applications/*, candidate_context.txt)
 ```
 
-Venv: shared `resumate_env` at `C:\Users\saf\Documents\coding\Python\Virtual_Environments\resumate_env` (Python 3.14).
+Venv: use the shared `resumate_env` virtual environment (Python 3.14). See the [README](../../README.md) for activation.

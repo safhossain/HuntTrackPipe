@@ -21,7 +21,9 @@ Full design: [`docs/DESIGN.md`](docs/DESIGN.md).
 
 From the repo root. `npm run dev` and `npm run api` use the shared venv’s Python, so you do not need to activate it for the web app. Activate it for the CLI and tests:
 
-> & "C:\Users\saf\Documents\coding\Python\Virtual_Environments\resumate_env\Scripts\Activate.ps1"
+Replace `<venv-directory>` with the path to your `resumate_env` directory:
+
+> & "<venv-directory>\Scripts\Activate.ps1"
 
 Install once:
 
@@ -74,7 +76,7 @@ The frontend build runs TypeScript checks and produces the production bundle. `t
 ### Prereqs
 - Python 3.11+ (developed on 3.14 in the shared `resumate_env` venv)
 - Node 22.18+ (the color tests use Node's built-in TypeScript support)
-- LibreOffice (for Office → PDF; auto-detected in `C:\Program Files\LibreOffice`, or set `files.soffice_path` in `htp.config.json`)
+- LibreOffice (for Office → PDF; auto-detected in the standard Windows installation directory, or set `files.soffice_path` in `htp.config.json`)
 - API keys in `.env` at the repo root: `TYPESAFE_API_KEY` for Jev, `ANTHROPIC_API_KEY` for Claude, and `OPENAI_API_KEY` for OpenAI. Get the Jev key from `console.typesafe.ai` only; third-party "Jev" resellers exist.
 
 ### Configure

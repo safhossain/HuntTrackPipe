@@ -8,4 +8,4 @@ JobHunting/Applications/*
 JobHunting/candidate_context.txt
 htp.config.json
 prompt.txt
-JobHunting/misc/HiringCafe_Filters.txt
+JobHunting/misc/*

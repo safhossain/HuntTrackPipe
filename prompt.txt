@@ -1,5 +1,5 @@
 Creating a Job Application Automation Pipeline - HuntTrackPipe. It is a separate but complimentary tool 
-to my other tool Resumate (C:\Users\saf\Documents\coding\PROJECTS\resumate). 
+to my other tool Resumate (in the sibling directory `../resumate`).
 
 Go over the what Resumate is about and how it works on a high level. There are plenty of READMEs and 
 .rules/ files within that resumate repo. YOU DO NOT (I repeat YOU DO NOT) need to read (or write) the entire codebase.
